@@ -83,6 +83,7 @@
 // createBattleRunner(deps) builds an instance with injectable net / store / clock / frame scheduler / sim loader
 // (test/match/runner.test.js and test/match/runner-pending.test.js drive it under Node).
 
+import { MAX_SEATS } from '../../../shared/constants.js';
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
 import { contentFor as appContentFor, simContent as appSimContent, contentSet as appContentSet } from '../content.js';
@@ -543,7 +544,7 @@ export function createBattleRunner(deps) {
       msg.bossDmg = pool && Number.isFinite(pool.cum) ? pool.cum : 0;
       if (pool && pool.byPlayer) {
         const by = {};
-        for (const pid of Object.keys(pool.byPlayer).slice(0, 4)) by[pid] = pool.byPlayer[pid];
+        for (const pid of Object.keys(pool.byPlayer).slice(0, MAX_SEATS)) by[pid] = pool.byPlayer[pid];
         msg.by = by;
       }
       // cumulative per-operator damage (规程). Omitted when empty so an older message shape stays valid.
@@ -551,8 +552,8 @@ export function createBattleRunner(deps) {
       if (ops) msg.ops = ops;
     } else {
       msg.leaks = Math.min(1e6, p.leaks);
-      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 4 players)
-      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
+      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, up to MAX_SEATS players)
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, MAX_SEATS));
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }

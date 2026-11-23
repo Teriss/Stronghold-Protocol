@@ -39,6 +39,7 @@ const BOSS_LP_PER_GS = 1;
 
 export class MatchBoss {
   startFinalAssault(hidden) {
+    this.captureOverviewLineups();
     const alive = this.alivePlayers();
     if (!alive.length) { this.finish({ victory: false, reason: 'eliminated' }); return; }
     this.phase = hidden ? PHASE.HIDDEN_CORE : PHASE.FINAL_ASSAULT;
@@ -607,11 +608,11 @@ export class MatchBoss {
           this.tickerText('隐秘核心已解锁', FLOW_TICKER_PRIORITY);
           this.startRound(this.gd.hiddenRound);
         } else {
-          this.finish({ victory, reason: victory ? 'victory' : 'defeat' });
+          this.completeCycle({ victory, reason: victory ? 'victory' : 'defeat' });
         }
       });
     } else {
-      this.later(this.scaled(DELAYS.SETTLE), () => this.finish({ victory: true, hiddenCleared: victory, reason: 'victory' }));
+      this.later(this.scaled(DELAYS.SETTLE), () => this.completeCycle({ victory: true, hiddenCleared: victory, reason: 'victory' }));
     }
   }
 }

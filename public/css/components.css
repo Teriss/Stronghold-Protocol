@@ -1330,3 +1330,100 @@
 .release-notes-body h3, .release-notes-body h4 { margin: .18rem 0 .08rem; }
 .release-notes-body code { white-space: pre-wrap; }
 .release-notes-body a { color: var(--mint); text-decoration: underline; }
+
+/* ---- endless vote modal & spectator strip ---------------------------------------------------- */
+.endless-vote--modal {
+  width: min(7.2rem, 94vw);
+  max-height: min(88vh, 88svh);
+}
+.endless-vote__content {
+  display: flex;
+  flex-direction: column;
+  gap: .12rem;
+  min-height: 0;
+}
+.endless-vote__countdown {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.endless-vote__desc {
+  font-size: calc(.16 * var(--t));
+  line-height: 1.6;
+  color: var(--text-md);
+  margin: 0;
+}
+.endless-vote__players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .08rem .16rem;
+  max-height: 2.8rem;
+  overflow-y: auto;
+  padding: .04rem 0;
+}
+.endless-vote__players span {
+  display: inline-flex;
+  align-items: center;
+  padding: .04rem .1rem;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--line);
+  font-size: calc(.14 * var(--t));
+}
+.endless-vote__players .is-agreed {
+  border-color: rgba(78, 216, 175, .5);
+  background: rgba(78, 216, 175, .08);
+  color: var(--mint-400);
+}
+
+/* 旁观者：底部悬浮条，不阻断观战交互 */
+.endless-vote--spectator {
+  position: fixed;
+  left: 50%;
+  bottom: max(.2rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(7.6rem, calc(100vw - 32px));
+  max-height: calc(100svh - .4rem);
+  padding: .12rem .2rem;
+  background: rgba(12, 16, 14, .95);
+  border: 1px solid rgba(78, 216, 175, .7);
+  box-shadow: 0 .08rem .3rem rgba(0, 0, 0, .65);
+  display: flex;
+  flex-direction: column;
+  gap: .08rem;
+  pointer-events: auto;
+}
+.endless-vote--spectator .endless-vote__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .1rem;
+}
+.endless-vote--spectator .endless-vote__title {
+  color: #9fd3ff;
+  font-size: calc(.18 * var(--t));
+}
+
+/* 手机横屏 (矮屏 <= 520px) 或长名单：正文/名单区可滚动，操作按钮常驻可见 */
+@media (max-height: 520px) {
+  .endless-vote--modal {
+    max-height: calc(100svh - 16px);
+  }
+  .endless-vote--modal .modal__head {
+    padding: .12rem .24rem .04rem;
+  }
+  .endless-vote--modal .modal__body {
+    padding: .08rem .24rem .14rem;
+  }
+  .endless-vote--modal .modal__actions {
+    padding: .1rem .24rem;
+  }
+  .endless-vote__players {
+    max-height: 1.8rem;
+  }
+  .endless-vote--spectator {
+    padding: .08rem .14rem;
+    max-height: 50svh;
+    overflow-y: auto;
+  }
+}

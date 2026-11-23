@@ -49,7 +49,7 @@ export function cardText(card, rich, rawRich = rich) {
 
 /**
  * Resolve an sp card to display fields.
- * @param {any} card normalised card ({ idx, takenBy, effectId?, itemId?, id?, name?, desc?, descRaw?, tier?, team?, enemyKey? })
+ * @param {any} card normalised card ({ idx, effectId?, itemId?, id?, name?, desc?, descRaw?, tier?, team?, enemyKey? })
  * @param {string|null} family 'bounty'|'supply'|'shop'|'tactic'
  */
 export function resolveSpCard(card, family) {
@@ -63,7 +63,7 @@ export function resolveSpCard(card, family) {
   const bounty = byEffect(choices?.cards?.bounty, effectId);
   const tactic = byEffect(choices?.cards?.tactic, effectId);
   const m = data.get('assets');
-  const kind = card.kind === 'item' || item ? 'item' : card.kind === 'bounty' || bounty || family === 'bounty' ? 'bounty' : 'tactic';
+  const kind = card.kind === 'funds' ? 'tactic' : card.kind === 'item' || item ? 'item' : card.kind === 'bounty' || bounty || family === 'bounty' ? 'bounty' : 'tactic';
   const enemyKey = card.enemyKey || bounty?.enemyKey || eff?.params?.enemy_id || null;
   const team = card.team ?? tactic?.team ?? (eff?.decoIconId === 'icon_team_buff');
   let icon = null;
@@ -72,6 +72,9 @@ export function resolveSpCard(card, family) {
   else if ((card.tacticKind || tactic?.kind) === 'terrain') icon = uiUrl(m, 'buffIcon/icon_stage_buff');
   else if ((card.tacticKind || tactic?.kind) === 'enemyDebuff') icon = uiUrl(m, 'buffIcon/icon_enemy_debuff');
   else icon = uiUrl(m, `buffIcon/${team ? 'icon_team_buff' : 'icon_player_buff'}`);
+  if (card.kind === 'funds') {
+    return { kind, name: t('资金补给'), desc: t('获得 2 资金'), tier: null, icon, team: false, coin: null };
+  }
   return {
     kind,
     name: tName(card.name) || item?.name || eff?.name || bounty?.name || tactic?.name || t('机变'),
@@ -86,21 +89,21 @@ export function resolveSpCard(card, family) {
 /**
  * Whether a card shows the in-flight pick (g.choice sent, no answer yet): only until the pick lands in m.public — the
  * player's pick is known or the card is taken — so it can never outlive the request's effect.
- * @param {number|null} busyIdx @param {{ idx: number, takenBy?: string|null }} card @param {number|null|undefined} mine
+ * @param {number|null} busyIdx @param {{ idx: number, exhausted?: boolean }} card @param {number|null|undefined} mine
  */
 export function pickBusy(busyIdx, card, mine) {
-  return busyIdx != null && !!card && busyIdx === card.idx && mine == null && !card.takenBy;
+  return busyIdx != null && !!card && busyIdx === card.idx && mine == null && !card.exhausted;
 }
 
 /**
  * Whether I may pick a card right now: my turn (solo: always), no pick of mine yet, the card free and no pick in flight.
- * @param {any} sp normalizeSp(...) @param {{ idx: number, takenBy?: string|null, soldOut?: boolean } | null | undefined} card
+ * @param {any} sp normalizeSp(...) @param {{ idx: number, exhausted?: boolean, soldOut?: boolean } | null | undefined} card
  * @param {{ myId: string, solo: boolean, busyIdx?: number|null }} o
  */
 export function cardPickable(sp, card, { myId, solo, busyIdx = null }) {
   if (!sp || !card) return false;
   const myTurn = solo || sp.turnPid === myId;
-  return myTurn && sp.pickOf.get(myId) == null && !card.takenBy && !card.soldOut && busyIdx == null;
+  return myTurn && !sp.pickOf.has(myId) && !card.exhausted && !card.soldOut && busyIdx == null;
 }
 
 /**
@@ -249,17 +252,21 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
       </header>
       ${onCollapse ? html`<button type="button" class="spov__collapse" data-testid="sp-collapse" onClick=${onCollapse} title=${t('收起，查看战场')}>
         <${Icon} name="collapse" /><span>${t('收起')}</span></button>` : null}
-      <div class=${cx('spov__grid', sp.cards.length <= 3 && 'spov__grid--3', onCollapse && 'spov__grid--collapse')}>
+      <div class=${cx('spov__grid', sp.cards.length > 6 && 'spov__grid--large', sp.cards.length <= 3 && 'spov__grid--3', onCollapse && 'spov__grid--collapse')}>
         ${sp.cards.map((card) => {
           const r = resolveSpCard(card, sp.family);
-          const taker = card.takenBy ? players.get(card.takenBy) : null;
+          const takers = card.pickers.map((id) => players.get(id)).filter(Boolean);
+          const takerNames = takers.map((p) => p.playerId === myId ? t('你') : p.name).join(', ');
+          const repeat = card.pickLimit > 1;
           const can = cardPickable(sp, card, { myId, solo, busyIdx });
           const busy = pickBusy(busyIdx, card, mine);
           const isArmed = can && armed === card.idx;
-          const takerName = taker ? (card.takenBy === myId ? t('你') : taker.name) : null;
-          return html`<button key=${card.idx} type="button" class=${cx('spcard', `spcard--${r.kind}`, (card.takenBy || card.soldOut) && 'is-taken', card.takenBy === myId && 'is-mine', can && 'is-pickable', isArmed && 'is-armed', busy && 'is-busy')}
+          const label = isArmed ? t('{name}，已选中，再次点击确认', { name: r.name })
+            : takerNames ? t('{name}，{takerName}已选择', { name: r.name, takerName: takerNames }) : r.name;
+          const uses = repeat ? t('已选 {used}/{limit}', { used: card.pickers.length, limit: card.pickLimit }) : null;
+          return html`<button key=${card.idx} type="button" class=${cx('spcard', `spcard--${r.kind}`, repeat && 'spcard--repeat', (card.exhausted || card.soldOut) && 'is-taken', mine === card.idx && 'is-mine', can && 'is-pickable', isArmed && 'is-armed', busy && 'is-busy')}
               aria-busy=${busy ? 'true' : undefined} aria-pressed=${can ? String(isArmed) : undefined} disabled=${!can} onClick=${() => can && onTap(card.idx)}
-              aria-label=${isArmed ? t('{name}，已选中，再次点击确认', { name: r.name }) : takerName ? t('{name}，{takerName}已选择', { name: r.name, takerName }) : r.name} title=${`${r.name}\n${richTextPlain(r.desc)}`}>
+              aria-label=${uses ? `${label} · ${uses}` : label} title=${`${r.name}\n${richTextPlain(r.desc)}`}>
             <span class="spcard__glow" aria-hidden="true"></span>
             <span class="spcard__head">
               <span class="spcard__icon"><${Img} src=${r.icon} fallback=${html`<${GIcon} name=${r.kind === 'bounty' ? 'target' : 'bolt'} />`} /></span>
@@ -272,9 +279,12 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
               </span>
             </span>
             <${RichText} text=${r.desc} class="spcard__desc" />
-            ${card.soldOut && !taker ? html`<span class="spcard__busy" role="status">${t('库存不足')}</span>` : null}
+            ${card.soldOut && !takers.length ? html`<span class="spcard__busy" role="status">${t('库存不足')}</span>` : null}
             ${r.tier ? html`<${TierChip} tier=${r.tier} size="md" class="spcard__tier" />` : null}
-            ${taker ? html`<span class="spcard__taker" title=${t('{name} 已选择', { name: taker.name })}><${PlayerAvatar} player=${taker} size="sm" /></span>` : null}
+            ${repeat || takers.length ? html`<span class="spcard__taker">
+              ${repeat ? html`<b class="spcard__uses num" title=${uses}>${card.pickers.length}/${card.pickLimit}</b>` : null}
+              ${takers.map((p) => html`<span key=${p.playerId} title=${t('{name} 已选择', { name: p.name })}><${PlayerAvatar} player=${p} size="sm" /></span>`)}
+            </span>` : null}
             ${isArmed ? html`<span class="spcard__confirm" role="status"><span class="spcard__cbox"><${Icon} name="check" /></span><b>${t('确认选择')}</b><small>${t('再次点击')}</small></span>` : null}
             ${busy ? html`<span class="spcard__busy" role="status">${t('选择中')}</span>` : null}
           </button>`;

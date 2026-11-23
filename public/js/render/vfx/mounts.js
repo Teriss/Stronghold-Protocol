@@ -25,6 +25,8 @@ export const POINT_NAMES = Object.freeze({
   head: ['HeadPoint', 'HeadAnchor', 'Head'],
 });
 const special = (n) => [`Special${n}`, `SpecialPoint${n}`, `Special_${n}`];
+// JSON vectors must match the dimensions the placement math uses.
+const validVector = (v, n) => Array.isArray(v) && v.length === n && v.every(Number.isFinite);
 
 /**
  * The camera tilt the drawn model faces (degrees from straight down: render/projection.js OFFICIAL.pitch). The client
@@ -35,6 +37,10 @@ const special = (n) => [`Special${n}`, `SpecialPoint${n}`, `Special_${n}`];
 export const SKELETON_TILT = 30;
 /** The client's Graphic rotation (−30° about X), for a skin that does not carry its own. */
 const GRAPHIC_ROT = Object.freeze([-0.258819, 0, 0, 0.965926]);
+function graphicQuaternion(skin) {
+  const rot = skin?.graphic?.rot, base = skin?.fallback?.graphic?.rot;
+  return validVector(rot, 4) ? rot : validVector(base, 4) ? base : GRAPHIC_ROT;
+}
 const DEG = Math.PI / 180;
 
 /** The point kind of a ParticleEffect spawn location (null = the unit's feet / the ground). */
@@ -82,7 +88,7 @@ export function spawnRotation(spawn) {
 
 /** The unit's Graphic rotation (quaternion [x, y, z, w]): the skin's `graphic.rot`, else the client's −30° about X. */
 export function graphicRotation(skin, out = [0, 0, 0, 1]) {
-  const g = skin && skin.graphic && Array.isArray(skin.graphic.rot) && skin.graphic.rot.length === 4 && skin.graphic.rot.every(Number.isFinite) ? skin.graphic.rot : GRAPHIC_ROT;
+  const g = graphicQuaternion(skin);
   out[0] = g[0]; out[1] = g[1]; out[2] = g[2]; out[3] = g[3];
   return out;
 }
@@ -145,21 +151,26 @@ export function skinShift(skin) {
  * when the index does not say) — or null when the skin lacks it.
  */
 export function skinPoint(skin, kind, back) {
-  const pts = skin && skin.points;
-  if (!pts || !kind) return null;
-  const names = kind[0] === 's' ? special(kind.slice(1)) : POINT_NAMES[kind] || [];
-  for (const nm of names) {
-    const p = pts[nm];
-    if (!p) continue;
-    const f = (back ? p.back : p.front) || p.all || p.front || p.back;
-    if (!f || !Array.isArray(f.pos)) continue;
-    const other = f === p.front ? p.back : p.front;
-    const bones = f.bone ? (other && other.bone && other.bone !== f.bone ? [f.bone, other.bone] : [f.bone]) : null;
-    const rot = Array.isArray(f.rot) && f.rot.length === 4 && f.rot.every(Number.isFinite) ? f.rot : null;
-    const followRot = !!bones && f.followRot !== false;
-    const sh = skinShift(skin);
-    if (!sh) return { pos: f.pos, bones, rot, followRot };
-    return { pos: [f.pos[0] + sh[0], f.pos[1] + sh[1], f.pos[2] + sh[2]], bones, rot, followRot };
+  if (!kind) return null;
+  const names = kind[0] === 's' ? special(kind.slice(1)) : Object.hasOwn(POINT_NAMES, kind) ? POINT_NAMES[kind] : [];
+  for (const s of [skin, skin?.fallback]) {
+    const pts = s?.points;
+    if (!pts) continue;
+    for (const nm of names) {
+      const p = Object.hasOwn(pts, nm) ? pts[nm] : null;
+      if (!p) continue;
+      const f = [back ? p.back : p.front, p.all, back ? p.front : p.back].find((x) => validVector(x?.pos, 3));
+      if (!f) continue;
+      const other = f === p.front ? p.back : p.front;
+      const bone = typeof f.bone === 'string' && f.bone ? f.bone : null;
+      const second = typeof other?.bone === 'string' && other.bone !== bone ? other.bone : null;
+      const bones = bone ? (second ? [bone, second] : [bone]) : null;
+      const rot = validVector(f.rot, 4) ? f.rot : null;
+      const followRot = !!bones && f.followRot !== false;
+      const sh = s === skin && skin?.outfit ? null : skinShift(s);
+      if (!sh) return { pos: f.pos, bones, rot, followRot };
+      return { pos: [f.pos[0] + sh[0], f.pos[1] + sh[1], f.pos[2] + sh[2]], bones, rot, followRot };
+    }
   }
   return null;
 }
@@ -233,7 +244,7 @@ export function mountPoint(skin, type, unit, out) { return unitPoint(skin, mount
  */
 export function mountRotation(skin, kind, unit, out = [0, 0, 0, 1]) {
   if (!kind) return null;
-  const g = skin && skin.graphic && Array.isArray(skin.graphic.rot) && skin.graphic.rot.length === 4 ? skin.graphic.rot : GRAPHIC_ROT;
+  const g = graphicQuaternion(skin);
   const p = skinPoint(skin, kind, !!unit.back);
   const b = p ? liveBone(p, unit) : null;
   const left = b ? b.flip < 0 : !!unit.left;

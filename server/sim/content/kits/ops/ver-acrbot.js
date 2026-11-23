@@ -3,6 +3,9 @@
 // 荒蛮之心 splashes from the stripped base ATK. S1 cleanses 异常 already on her and refuses new ones
 // [ASSUMED: the immunity covers a stun she is opened under, and every 异常 while the skill runs].
 // She swings at allies in range: appended when the swing already has an enemy, and forced on the tick when it does not.
+// The official TANK row is ON_TAKE_DAMAGE + SKILL_RANGE_ENEMY; since her skill swings at 我方 too, an ally in range is a
+// target of the second condition as well (`allyCast` in server/sim/skills.js) — the skill opens with only allies around
+// (user report, 2026-11-22), not only after a hit.
 
 import { alliesInGridOf, batMod, num, statBuff, talentBb, traitBb } from '../shared/tier1.js';
 import { ABNORMAL, cleanseAbnormal } from '../shared/tier6.js';
@@ -17,6 +20,7 @@ function acrbot(_bb, chess, def) {
   const { skills, skill } = kitSkills(chess, def, (id, rec, sbb) => {
     if (id === S1) return {
       id, kind: 'duration', duration: posDur(rec),
+      allyCast: true,
       mods: {
         batPct: batMod(sbb.base_attack_time, chess, descOf(rec)),
         atkPct: num(sbb.atk),

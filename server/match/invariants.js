@@ -79,7 +79,8 @@ export function collectViolations(m, { limit = 25 } = {}) {
       if (!(Number.isFinite(v) && v >= 0 && (!(BOND_LAYER_CAP > 0) || v <= BOND_LAYER_CAP))) fail(`${id}: ${b} layers ${v}`);
     }
 
-    if (!ps.alive) {
+    const preserved = m.endless && !ps.alive && !ps.left;
+    if (!ps.alive && !preserved) {
       if (ps.board.size) fail(`${id}: eliminated but keeps ${ps.board.size} board pieces`);
       if (ps.hand.some(Boolean) || ps.temp.some(Boolean)) fail(`${id}: eliminated but keeps hand/temp pieces`);
       if (ps.shop.slots.length || ps.offers.length || ps.bounties.length) fail(`${id}: eliminated but keeps shop/offers/bounties`);
@@ -136,14 +137,14 @@ export function collectViolations(m, { limit = 25 } = {}) {
     let deployed = 0;
     // a pure read (Match.deployMapFor: the field the player deploys on now) — PlayerState.deployMap() would update the
     // player's cached field / legality flag, and this checker must not change when a later recompute moves pieces
-    const dmap = typeof m.deployMapFor === 'function' ? m.deployMapFor(ps) : ps.deployMap();
+    const dmap = preserved ? null : typeof m.deployMapFor === 'function' ? m.deployMapFor(ps) : ps.deployMap();
     for (const [k, p] of ps.board) {
       const [r, c] = parseKey(k);
       if (!(r >= FIELD.r0 && r <= FIELD.r1 && c >= FIELD.c0 && c <= FIELD.c1)) fail(`${id}: piece outside the board at ${k}`);
       if (p.kind === 'item') { fail(`${id}: item ${p.id} stands on the board`); continue; }
       const rec = p.kind === 'token' ? pgd.token(p.id) : pgd.chess(p.id);
       const cls = p.kind === 'chess' ? placeClass(ps, rec) : positionClass(rec);
-      if (rec && !canPlace(dmap, cls, r, c)) fail(`${id}: ${p.id} on an illegal tile ${k}`);
+      if (dmap && rec && !canPlace(dmap, cls, r, c)) fail(`${id}: ${p.id} on an illegal tile ${k}`);
       // a "只能部署在召唤者攻击范围内" summon inside its owner's attack range (PlayerState.summonRange: a pure read)
       const range = p.kind === 'token' && typeof ps.summonRange === 'function' ? ps.summonRange(p) : null;
       if (range && !range.has(k)) fail(`${id}: ${p.id} on ${k}, outside its owner's attack range`);

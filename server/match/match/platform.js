@@ -264,6 +264,11 @@ export class MatchPlatform {
       // a rehearsal the departed seat was running falls back to the server (DESIGN §14; a no-op without tasks)
       this._rehearsalHostChanged();
       this.markPublic();
+      if (this.endlessVote) {
+        this._quit(ps);
+        this.resolveEndlessVote();
+        return;
+      }
       if (!this.order.some((p) => !p.isBot && !p.left)) {
         this.finish({ victory: false, reason: 'abandoned' });
         return;
@@ -280,7 +285,10 @@ export class MatchPlatform {
    */
   _quit(ps) {
     this.maybeEndInfo();
-    if (!ps.alive) return;
+    if (!ps.alive) {
+      if (this.endless) ps.releaseEliminatedAssets();
+      return;
+    }
     const phase = this.phase;
     const passedRound = phase === PHASE.SETTLE ? this.round + 1 : Math.max(1, this.round);
     // its own normal battle has nobody left to fight for
@@ -307,8 +315,8 @@ export class MatchPlatform {
     // whoever scouted the departed player's board follows the next player still in (item 56)
     for (const v of this._viewers()) if (this.watchers.get(v.playerId) === `n:${ps.playerId}`) this._followScout(v);
     this.markPublic();
-    if (this.teamLp != null) this._syncTeamLp();
-    if (!this.alivePlayers().length) {
+    if (phase !== PHASE.ENDLESS_VOTE && this.teamLp != null) this._syncTeamLp();
+    if (phase !== PHASE.ENDLESS_VOTE && !this.alivePlayers().length) {
       // only eliminated spectators are left
       this.finish({ victory: false, reason: 'eliminated' });
       return;

@@ -8,6 +8,7 @@ import { itemProgress, equippedItemProgress } from '../itemProgress.js';
 import { PHASE, GEO } from '../../../shared/constants.js';
 import { TEST_PUBLIC_LOG } from '../../../shared/testMode.js';
 import { boardOrder, pieceDir } from '../board.js';
+import { lineupView } from '../results.js';
 import { bondList, offBondCounts } from '../bondsMeta.js';
 import { commandBondOverrides } from '../bandCommands.js';
 import { cardView } from '../choices.js';
@@ -15,6 +16,7 @@ import { bountySpawns, previewOf } from '../waves.js';
 import { timelineAt } from '../fields.js';
 import { bossFieldPlacement } from '../finalAssault.js';
 import { battleProgress } from '../../sim/spec.js';
+import { endlessMultiplier } from './endless.js';
 
 /** Milliseconds since the match started. A stamp before the start, or a bad stamp, is 0. The stored log keeps the epoch. */
 function auditClock(at, startedAt) {
@@ -75,7 +77,21 @@ export class MatchViews {
     return f ? f.fieldId : null;
   }
 
+  captureOverviewLineups() {
+    if (this.isSolo) return;
+    this.overviewLineups = new Map(this.alivePlayers().map((ps) => [ps.playerId, lineupView(this.gd, ps)]));
+  }
+
+  overviewLineup(ps, inBattle) {
+    if (!ps.alive || ps.left) return [];
+    return (inBattle && this.overviewLineups?.get(ps.playerId)) || lineupView(this.gd, ps);
+  }
+
   publicView() {
+    const inBattle = this.phase === PHASE.COMBAT || this.phase === PHASE.UNITE || this.phase === PHASE.FINAL_ASSAULT
+      || this.phase === PHASE.HIDDEN_CORE || this.phase === PHASE.SETTLE;
+    const endlessVoters = this.endlessVote ? this.endlessVoters() : null;
+
     const v = {
       t: 'm.public',
       phase: this.phase,
@@ -109,6 +125,15 @@ export class MatchViews {
       hiddenRound: this.gd.hiddenRound,
       bossPairs: this.bossWaves ? this.bossWaves.map(w => w.players.slice()) : this.bossPairs ? this.bossPairs.map(ids => ids.slice()) : null,
       spRound: this.gd.spRounds().includes(this.round),
+      ...(this.prepUnlimited ? { prepUnlimited: true } : {}),
+      ...(this.endless ? { endless: {
+        cycle: this.endlessCycle, cleared: this.endlessCleared, multiplier: this.gd.endlessEnemyMultiplier,
+        ...(endlessVoters ? { vote: {
+          voters: endlessVoters,
+          agreed: endlessVoters.filter((id) => this.endlessVote.agreed.has(id)),
+          nextMultiplier: endlessMultiplier(this.endlessCycle + 1),
+        } } : {}),
+      } } : {}),
       // DESIGN §14: 'client' = battles are simulated by the browsers (b.start specs), 'server' = legacy streaming
       combatMode: this.clientCombat ? 'client' : 'server',
       // solo pause (g.pause, DESIGN §14): the battle, its field clock and every deadline are frozen while true
@@ -125,6 +150,7 @@ export class MatchViews {
         bandId: ps.bandId,
         shopLevel: ps.shop.level,
         boardCount: ps.deployCount,
+        ...(!this.isSolo ? { lineup: this.overviewLineup(ps, inBattle) } : {}),
         ready: this.phase === PHASE.INFO_CHECK ? ps.infoReady : this.phase === PHASE.CUSTOM_CHECK ? ps.diyBring != null : ps.ready,
         // the strip of a teammate watching this player (DESIGN §20.15): every bond with members, layers or an active tier
         // (= the player's own m.private list without thresholds / countsHand — the client reads those from bonds.json),
@@ -177,10 +203,17 @@ export class MatchViews {
     }
     if (this.phase === PHASE.SP_DRAFT && this.sp) {
       const s = this.sp;
+      const taken = {};
+      const cards = s.cards.map((card) => {
+        const pickers = this.spCardPickers(card.idx);
+        if (pickers.length) taken[card.idx] = pickers[0];
+        const pickLimit = this.spCardPickLimit(card);
+        return { ...cardView(card), soldOut: card.kind === 'item' && !this.itemPool.canGain(card.id),
+          ...(pickLimit > 1 ? { pickLimit } : {}) };
+      });
       v.sp = {
         family: s.family, name: s.name, desc: s.desc, eventId: s.eventId,
-        cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.itemPool.canGain(c.id) })), order: s.order.slice(),
-        turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
+        cards, order: s.order.slice(), turn: this.spTurn(), picks: { ...s.picks }, taken, untimed: !!s.untimed,
       };
     }
     if (this.phase === PHASE.UNITE && this.unitePlan) v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };

@@ -79,6 +79,7 @@ export class MatchCombat {
   }
 
   startCombat() {
+    this.captureOverviewLineups();
     if (this.clientCombat) { this._startCombatClient(); return; }
     this.phase = PHASE.COMBAT;
     const alive = this.alivePlayers();

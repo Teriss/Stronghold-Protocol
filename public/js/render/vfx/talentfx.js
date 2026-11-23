@@ -111,7 +111,7 @@ export class TalentFx {
     const k = this._key(e, v);
     if (!k) return null;
     const loop = !!o.loop;
-    const h = this.w.playOn(k, v, { follow: loop || e.hold === 'cast', loop, important: loop || e.hold === 'cast', toward: o.toward, flipFrom: o.flipFrom });
+    const h = this.w.playOn(k, v, { follow: loop || e.hold === 'cast', loop, important: loop || e.hold === 'cast', toward: o.toward, flipFrom: o.flipFrom, skinFrom: o.skinFrom });
     if (h && !loop && (e.hold === 'cast' || e.loop)) this._later(o.holdS ?? TALENT_CAST_S, () => h.stop());
     return h;
   }
@@ -241,7 +241,7 @@ export class TalentFx {
         if (b.when !== 'attack' || !this._modeOk(U, b)) continue;
         for (const a of b.plan.attacks) {
           for (const e of uniq([...a.cast, ...a.range])) if (this._play(e, U.v, { toward: tgt || undefined })) drew = true;
-          if (tgt) for (const e of uniq(a.hit[0] || [])) if (this._play(e, tgt, { flipFrom: U.v })) drew = true;
+          if (tgt) for (const e of uniq(a.hit[0] || [])) if (this._play(e, tgt, { flipFrom: U.v, skinFrom: U.v })) drew = true;
         }
       }
       return drew;
@@ -260,7 +260,7 @@ export class TalentFx {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
     const at = this.w.skills._ground(x, y);
     let drew = false;
-    for (const a of b.plan.attacks) for (const e of uniq(a.hit[0] || [])) if (this._play(e, at, { flipFrom: src })) drew = true;
+    for (const a of b.plan.attacks) for (const e of uniq(a.hit[0] || [])) if (this._play(e, at, { flipFrom: src, skinFrom: src })) drew = true;
     return drew;
   }
 

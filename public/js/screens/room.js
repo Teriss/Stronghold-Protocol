@@ -48,7 +48,7 @@
 // Texts go through t() (docs/I18N.md).
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS, MAX_SPECTATORS } from '../../../shared/constants.js';
+import { DIFFICULTY_NAMES, DIFFICULTY_COLORS, COOP_ROOM_CAPACITIES, DEFAULT_COOP_CAPACITY, MAX_SPECTATORS } from '../../../shared/constants.js';
 import {
   html, Button, Icon, MicroLabel, PingPill, AvatarFrame, DifficultyIcon, Tooltip, Spinner, confirmDialog, doctorNo, Modal,
   TextField,
@@ -68,7 +68,7 @@ import { hasScriptConsent, rememberScriptConsent, pageVersion } from '../content
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating, savePref } from '../store.js';
 import { data, useData, getConfig } from '../data.js';
-import { chessAvatarUrl, chessPortraitUrl } from '../ui/assetUrls.js';
+import { chessAvatarUrl, roomCardPortraitUrls } from '../ui/assetUrls.js';
 import { CARD_KEY, cardStore, setCard, cardOperators, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
 import { skinsStore, SKINS_KEY, ownerSkin } from '../ui/skins.js';
 import { settingsStore } from '../ui/settingsStore.js';
@@ -82,7 +82,7 @@ import { t, tc } from '../../../shared/i18n.js';
  * @returns {(null | {seat:number, playerId:any, name:string, isBot:boolean, ready:boolean, connected:boolean})[]}
  */
 export function normalizeSeats(room) {
-  const cap = room?.mode === 'solo' ? 1 : MAX_SEATS;
+  const cap = room?.mode === 'solo' ? 1 : COOP_ROOM_CAPACITIES.includes(room?.capacity) ? room.capacity : DEFAULT_COOP_CAPACITY;
   const src = Array.isArray(room?.seats) ? room.seats : [];
   const out = [];
   for (let i = 0; i < cap; i++) {
@@ -269,11 +269,12 @@ function CardPicker({ current, list, m, localSkins = {}, onPick, onClose }) {
  * larger 文字大小 wraps and pushes them apart rather than drawing one over another (§35.18 review). One's own card offers 更换立绘
  * (`onPickCard`); the host gets 移出 / 移除 AI 队友 at the top right. One's own card in a co-op room carries 转为观战 at
  * that corner too (`onSpectate`), shown only on a short screen, where the 观战席 bar gives its line up (room.css). An
- * empty seat: 邀请 (copies the key) and, for the host of a co-op room, 添加 AI 队友. `portrait` is the outfit's picture,
- * `portraitDefault` the operator's default one (given when an outfit is worn): a picture that fails to load gives way to
- * the next, the last to the avatar frame.
+ * empty seat: 邀请 (copies the key) and, for the host of a co-op room, 添加 AI 队友. `portraits` are the pictures of the
+ * card's operator, best first (ui/assetUrls.js roomCardPortraitUrls: the outfit's high-resolution art, the outfit, the
+ * default art and its high-resolution copy): a picture that fails to load gives way to the next, the last to the avatar
+ * frame.
  */
-function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick, onInvite, portrait = null, portraitDefault = null, operator = null, onPickCard = null, onSpectate = null, fresh = false }) {
+function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick, onInvite, portraits = [], operator = null, onPickCard = null, onSpectate = null, fresh = false }) {
   const [badArt, setBadArt] = useState([]);
   const coop = room.mode !== 'solo';
   // the 转场 flash: a seat that turns ready (or becomes the host's), and an AI teammate added while the room is open
@@ -303,7 +304,7 @@ function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot,
   // The host never needs to toggle ready: starting the match readies them (server rule).
   const state = offline ? 'offline' : isHostSeat ? 'host' : seat.ready || seat.isBot ? 'ready' : 'waiting';
   const lit = state === 'ready' || state === 'host';
-  const art = seat.isBot ? null : seatArtSrc([portrait, portraitDefault], badArt);
+  const art = seat.isBot ? null : seatArtSrc(portraits, badArt);
   const canPick = isMe && !seat.isBot && !!onPickCard;
   // an AI teammate's name without its 「AI·」 prefix on a phone (room.css; botNameParts)
   const botPrefix = botNameParts(seat);
@@ -452,6 +453,10 @@ function RoomOptions({ option, takeoverOption, onAiTakeover, soloOption = null, 
       ${version.editable ? null : html`<span class="t-dim">${t('由创建者发起')}</span>`}
     </div>` : null}
     <${AiTakeoverToggle} option=${takeoverOption} busy=${busy} onToggle=${onAiTakeover} />
+    ${room.mode === 'coop' ? html`<div class="rs-opts__row">
+      <span class="rs-opts__k">${t('休整不限时')}</span>
+      <span class="t-dim" data-testid="room-prep-unlimited">${room.prepUnlimited ? t('开启') : t('关闭')}</span>
+    </div>` : null}
     ${soloOption
       ? html`<${SoloUnlimitedToggle} option=${soloOption} busy=${busy} onToggle=${onSoloUnlimited} />`
       : html`<${AiLastToggle} option=${option} busy=${busy} onToggle=${onAiLast} />`}
@@ -713,7 +718,7 @@ export function RoomScreen() {
   };
 
   // the room wears its version's season look like the lobby (规程: data-season="act3autochess", room.css)
-  return html`<div class=${`screen room-screen rs${coop ? '' : ' rs--solo'}`} data-season=${seasonOf(roomVersion(room))} style=${`--d-color:${room.modeId ? info.color : DIFFICULTY_COLORS[room.difficulty] || 'var(--amber)'}; --n:${facts.seats.length}`}>
+  return html`<div class=${`screen room-screen rs${coop ? '' : ' rs--solo'}`} data-season=${seasonOf(roomVersion(room))} data-capacity=${facts.seats.length} style=${`--d-color:${room.modeId ? info.color : DIFFICULTY_COLORS[room.difficulty] || 'var(--amber)'}; --n:${facts.seats.length}`}>
     <div class="rs__bg" aria-hidden="true"></div>
     <header class="topbar rs-top">
       <div class="topbar__left rs-top__left">
@@ -750,8 +755,8 @@ export function RoomScreen() {
         const skin = op ? seatCardSkin(s, op.chess.charId, { myId: me.playerId, localSkins, players: facts.occupied, otherSkins }) : null;
         return html`<${SeatCard} key=${s ? `p${s.playerId}` : `e${i}`} seat=${s} index=${i} room=${room} facts=${facts}
           myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} onInvite=${() => copy('code')} onSpectate=${spectate}
-          portrait=${op ? chessPortraitUrl(data.get('assets'), op.chess, { skin }) : null}
-          portraitDefault=${op && skin ? chessPortraitUrl(data.get('assets'), op.chess) : null} operator=${op?.chess} onPickCard=${() => setPicking(true)}
+          portraits=${op ? roomCardPortraitUrls(data.get('assets'), op.chess, { skin }) : []}
+          operator=${op?.chess} onPickCard=${() => setPicking(true)}
           fresh=${shownRoom.current === room.code} />`;
       })}
       ${coop ? null : html`<aside class="solo-brief rs-brief brackets">
@@ -772,7 +777,10 @@ export function RoomScreen() {
     <footer class="room-bar rs-foot">
       <div class="rs-foot__left" aria-hidden="true"></div>
       <div class="rs-foot__center">
-        <p class="rs-hint">${coop ? html`<span class="rs-ready num" title=${t('已就绪')}>${facts.humans.map((s) => html`<${Icon} key=${s.playerId} name="user" class=${facts.isReady(s) ? 'is-on' : ''} />`)}<b>${facts.readyHumans}</b>/${facts.humans.length}</span>` : null}<span class="room-bar__status">${statusLine}</span></p>
+        <p class="rs-hint">${coop ? html`<span class="rs-ready num" title=${t('已就绪')}>${facts.humans.map((s) => html`<${Icon} key=${s.playerId} name="user" class=${facts.isReady(s) ? 'is-on' : ''} />`)}<b>${facts.readyHumans}</b>/${facts.humans.length}</span>` : null}<span class="room-bar__status">${statusLine}</span>
+          ${room.prepUnlimited ? html` <span class="rs-prep-unlimited" title=${t('每轮休整须全员就绪后才开始作战')}>${t('休整不限时')}</span>` : null}
+          ${room.endless ? html` <span class="rs-prep-unlimited" title=${t('通关后投票续轮，保留养成并更换地图')}>${t('无尽模式')}</span>` : null}
+        </p>
         <div class="rs-pill">
           <button type="button" class=${`rs-pill__diff${facts.isHost ? '' : ' is-ro'}`} disabled=${facts.isHost && !!busy} onClick=${openProto}
             title=${facts.isHost ? t('更改模拟难度') : t('由创建者选择')}><${DifficultyIcon} difficulty=${room.difficulty} />${room.modeId ? info.name : DIFFICULTY_NAMES[room.difficulty] ? t(DIFFICULTY_NAMES[room.difficulty]) : ''}<span class="num rs-pill__code">${info.code}</span></button>

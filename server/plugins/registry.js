@@ -41,7 +41,7 @@
 // server/packs.js re-exports the pack API of this file for its old callers.
 
 import { nodeSha256 } from './identity.js';
-import { mergeLocalChars, readInstalledAssetOverlay } from './artReferences.js';
+import { LOCAL_SKINS_MANIFEST, mergeLocalChars, mergeLocalSkins, readInstalledAssetOverlay } from './artReferences.js';
 import { readScripts, applyTrust, isScriptClass } from './trusted.js';
 import { operatorTraitPermissions } from './operatorTraits.js';
 import { readContentData } from './contentData.js';
@@ -196,25 +196,34 @@ export function hashFile(abs, cache) {
   } catch { return null; }
 }
 
+const optionalArtStamp = (abs) => {
+  try { const st = fs.statSync(abs); if (st.isFile()) return JSON.stringify(statIdentity(st)); } catch { /* optional */ }
+  return '';
+};
+
 /** The art manifest data/assets.json of `dataDir` (VanillaAssets), from `cache` while its stat identity stays. */
 export function readVanillaAssets(dataDir, cache = new Map()) {
   const abs = path.join(dataDir, 'assets.json');
-  const local = path.join(dataDir, 'local-assets.json');
-  let localStamp = '';
-  try { localStamp = JSON.stringify(statIdentity(fs.statSync(local))); } catch { /* optional */ }
+  const local = path.join(dataDir, 'local-assets.json'), skins = path.join(dataDir, LOCAL_SKINS_MANIFEST);
+  const localStamp = optionalArtStamp(local), skinStamp = optionalArtStamp(skins);
   let st;
   try { st = fs.statSync(abs); } catch { return { manifest: null, sha256: null }; }
   const hit = cache.get(abs);
-  if (hit && hit.localStamp === localStamp && sameIdentity(hit, statIdentity(st))) return hit.value;
+  if (hit && hit.localStamp === localStamp && hit.skinStamp === skinStamp && sameIdentity(hit, statIdentity(st))) return hit.value;
   let value = { manifest: null, baseManifest: null, sha256: null };
   try {
     const buf = fs.readFileSync(abs);
     const baseManifest = JSON.parse(buf.toString('utf8'));
     value = { manifest: baseManifest, baseManifest, sha256: createHash('sha256').update(buf).digest('hex') };
     // Validate references against the same installation art the browser sees. Preserve the existing identity hash.
-    try { value.manifest = mergeLocalChars(value.manifest, JSON.parse(fs.readFileSync(local, 'utf8'))); } catch { /* optional */ }
+    if (localStamp) {
+      try { value.manifest = mergeLocalChars(value.manifest, JSON.parse(fs.readFileSync(local, 'utf8'))); } catch { /* optional */ }
+    }
+    if (skinStamp) {
+      try { value.manifest = mergeLocalSkins(value.manifest, JSON.parse(fs.readFileSync(skins, 'utf8'))); } catch { /* optional */ }
+    }
   } catch { /* unreadable: no references can be checked, no vs */ }
-  cache.set(abs, { ...statIdentity(st), localStamp, value });
+  cache.set(abs, { ...statIdentity(st), localStamp, skinStamp, value });
   return value;
 }
 
@@ -904,7 +913,10 @@ function signature({ publicDir, dataDir, packsDir, pluginsDir }) {
       add(abs, 5, `x:${n}/`, false, true, { left: WALK_LIMITS.entries });
     }
     try { const st = fs.statSync(path.join(dataDir, 'assets.json')); parts.push(`a:${st.size}:${Math.floor(st.mtimeMs)}`); } catch { /* none */ }
-    try { const st = fs.statSync(path.join(dataDir, 'local-assets.json')); parts.push(`la:${JSON.stringify(statIdentity(st))}`); } catch { /* none */ }
+    for (const name of ['local-assets.json', LOCAL_SKINS_MANIFEST]) {
+      const stamp = optionalArtStamp(path.join(dataDir, name));
+      if (stamp) parts.push(`${name}:${stamp}`);
+    }
   }
   return parts.join('\n');
 }
@@ -984,7 +996,7 @@ export function createPluginRegistry(dirs, { log = { info: noop, warn: noop }, a
     },
     /** The entry of an id (any class, any status), or null. @param {string} id @returns {Plugin | null} */
     plugin: (id) => refresh().byId.get(id) || null,
-    /** The installation's art manifest (VanillaAssets): the one the last scan read, else read now (kept by size + mtime). */
+    /** The installation's art manifest (VanillaAssets): the one the last scan read, else read now through the stat cache. */
     vanillaAssets: () => refresh().vanilla || readVanillaAssets(dirs.dataDir, artCache),
     /** The loaded language entries, optionally of one manifest 1 type. @param {string} [type] @returns {Plugin[]} */
     list: (type) => refresh().packs.filter((p) => !type || p.type === type),

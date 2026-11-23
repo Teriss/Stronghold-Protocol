@@ -572,7 +572,9 @@ function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDe
       </div>
       <div class="settle__barbg steam__barbg" aria-hidden="true"><${Sprite} k="settle/bottom_bg" /></div>
       <div class="steam__outcome">
-        <span class="steam__tags"><${ModePill} r=${r} /><${UnofficialMark} room=${content ? { content } : null} /><${VersionTag} version=${version} /><${SettleTestMark} res=${res} /></span>
+        <span class="steam__tags"><${ModePill} r=${r} /><${UnofficialMark} room=${content ? { content } : null} /><${VersionTag} version=${version} /><${SettleTestMark} res=${res} />
+          ${res?.endless ? html`<span>${t('无尽已通关 {n} 轮', { n: res.endless.cleared })}</span>` : null}
+        </span>
         <${SettleTitle} as="b" class="steam__title">${r.victory ? t('模拟完成') : t('模拟中断')}</${SettleTitle}>
       </div>
       <div class="steam__rounds"><span>${t('同盟通过回合')}</span><b class="num">${rounds}</b></div>

@@ -459,14 +459,14 @@ export function useModalFocus(open, onClose, boxRef) {
  *   width?: string, closeOnBackdrop?: boolean, class?: string, veilClass?: string, children?: any }} props
  * `veilClass` styles the backdrop itself (e.g. a dialog that dims the field without blurring it).
  */
-export function Modal({ open, title, micro, tone = 'mint', onClose, actions, width, closeOnBackdrop = true, class: cls, veilClass, children }) {
+export function Modal({ open, title, micro, tone = 'mint', onClose, actions, width, closeOnBackdrop = true, class: cls, veilClass, children, ...rest }) {
   const boxRef = useRef(null);
   useModalFocus(open, onClose, boxRef);
   if (!open) return null;
   return html`<div class=${cx('modal', veilClass)} role="presentation"
       onMouseDown=${(e) => { if (closeOnBackdrop && e.target === e.currentTarget && onClose) onClose(); }}>
     <div ref=${boxRef} class=${cx('modal__box', 'brackets', `modal__box--${tone}`, cls)} role="dialog" aria-modal="true" tabindex="-1"
-         style=${width ? `width:${width}` : undefined}>
+         style=${width ? `width:${width}` : undefined} ...${rest}>
       <div class="modal__stripe" aria-hidden="true"></div>
       ${title || micro ? html`<header class="modal__head">
         ${micro ? html`<${MicroLabel}>${micro}<//>` : null}

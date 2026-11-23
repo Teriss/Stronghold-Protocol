@@ -1,5 +1,6 @@
 // Registry only: implementations import the contract, not this module, to avoid registration/import cycles.
 // The external host is loaded by llmGate.js, and only on a dev checkout (§35.66). A release has no `external` id.
+import { MAX_SEATS } from '../../shared/constants.js';
 import { createBotRegistry, defineBotStrategy } from './botStrategyContract.js';
 import { EXTERNAL_BOT, llmIntegrationEnabledNow } from './llmGate.js';
 
@@ -26,7 +27,7 @@ export function getBotStrategy(selection = 'legacy', registry = BOT_STRATEGIES) 
 
 /**
  * Per-seat overrides of the match's strategy (#816 P1). `SP_BOT_STRATEGY_SEATS` text is `seat:id[,seat:id…]`
- * (room seats 0–3 like SP_EXTERNAL_AI_SEATS, registered IDs); a programmatic selection is `{ [seat]: id | definition }`.
+ * (room seats 0 through MAX_SEATS − 1, registered IDs); a programmatic selection is `{ [seat]: id | definition }`.
  * Unset or empty: no overrides. Each entry resolves through getBotStrategy (unknown IDs fail, a release maps external).
  * @param {string | Record<string, string | import('./botStrategyContract.js').BotStrategyDefinition>} [selection]
  * @returns {Readonly<Record<string, import('./botStrategyContract.js').BotStrategy>>}
@@ -43,9 +44,9 @@ export function getBotStrategySeats(selection, registry = BOT_STRATEGIES) {
     });
   } else if (typeof selection === 'object' && !Array.isArray(selection)) entries = Object.entries(selection);
   else throw new Error('Bot strategy seats: a seat:id list or a { seat: id } object is required');
-  if (entries.length > 4) throw new Error('Bot strategy seats: at most 4 seats');
+  if (entries.length > MAX_SEATS) throw new Error(`Bot strategy seats: at most ${MAX_SEATS} seats`);
   for (const [seat, choice] of entries) {
-    if (!/^[0-3]$/.test(seat)) throw new Error(`Bot strategy seats: seat must be 0..3, got "${seat}"`);
+    if (!/^[0-9]$/.test(seat) || Number(seat) >= MAX_SEATS) throw new Error(`Bot strategy seats: seat must be 0..${MAX_SEATS - 1}, got "${seat}"`);
     if (Object.hasOwn(out, seat)) throw new Error(`Bot strategy seats: seat ${seat} is listed twice`);
     // getBotStrategy reads '' / undefined as legacy; an entry must name its strategy.
     if (choice == null || choice === '') throw new Error(`Bot strategy seats: seat ${seat} needs a strategy id`);

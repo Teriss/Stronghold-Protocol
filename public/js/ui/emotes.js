@@ -205,9 +205,10 @@ export function EmoteBubble({ id, class: cls, ttl = EMOTE_BUBBLE_MS, at }) {
 /**
  * 交流 button + emote panel.
  * @param {{ onSend: (id:string)=>void, open: boolean, onToggle: (open:boolean)=>void, disabled?: boolean,
- *   cooldownMs?: number }} props
+ *   cooldownMs?: number, chat?: any, chatOpen?: boolean, onTab?: ((tab: string) => void)|null,
+ *   chatOnly?: boolean, unread?: number }} props
  */
-export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownMs = EMOTE_COOLDOWN_MS }) {
+export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownMs = EMOTE_COOLDOWN_MS, chat = null, chatOpen = false, onTab = null, chatOnly = false, unread = 0 }) {
   useData('local');
   useEffect(() => { ensureEmoteCss(); }, []);
   const [page, setPage] = useState(lastThemeIndex);
@@ -246,7 +247,8 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
       if (t instanceof Element && t.closest('input, textarea, select, [contenteditable="true"]')) return;
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (e.key === 'Escape' && chat) live.current.onToggle(false);
+      if (!chatOpen && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
         go(live.current.page + (e.key === 'ArrowRight' ? 1 : -1));
       }
@@ -254,7 +256,7 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
     window.addEventListener('pointerdown', onDown, true);
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('pointerdown', onDown, true); window.removeEventListener('keydown', onKey); };
-  }, [open]);
+  }, [open, chatOpen]);
 
   const send = (id) => {
     if (swallowClick.current) { swallowClick.current = false; return; }
@@ -310,11 +312,16 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
   return html`<div class="ewheel">
     <button type="button" class=${cx('ewheel__btn', btnSprite && 'has-sprite', open && 'is-on', cooling && 'is-cooling')}
       style=${btnSprite ? `--ewheel-btn:url("${btnSprite}")` : ''} onClick=${() => onToggle(!open)}
-      aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog" disabled=${disabled || cooling}>
+      aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog" disabled=${!chat && (disabled || cooling)}>
       ${btnSprite ? null : html`<${GIcon} name="emote" />`}<span class="ewheel__label">${t('交流')}</span>
     </button>
-    ${open ? html`<div class=${cx('ewheel__panel', panelBg && 'has-sprite', cellBg && 'has-cell')} style=${panelStyle} role="dialog" aria-label=${t('交流')}>
-      <div class="ewheel__viewport" onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
+    ${unread ? html`<span class="ewheel__unread" aria-label=${t('未读消息') + ' ' + unread}>${unread}</span>` : null}
+    ${open ? html`<div class=${cx('ewheel__panel', chatOpen && 'has-chat', panelBg && !chatOpen && 'has-sprite', cellBg && 'has-cell')} style=${panelStyle} role="dialog" aria-label=${t('交流')}>
+      ${chat && !chatOnly ? html`<div class="ewheel__tabs" role="group" aria-label=${t('交流')}>
+        <button type="button" aria-pressed=${!chatOpen} onClick=${() => onTab('emotes')}>${t('表情')}</button>
+        <button type="button" aria-pressed=${chatOpen} onClick=${() => onTab('chat')}>${t('聊天')}</button>
+      </div>` : null}
+      ${chatOpen ? chat : html`<div class="ewheel__viewport" onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
         onPointerUp=${(e) => endDrag(e, false)} onPointerCancel=${(e) => endDrag(e, true)} onWheel=${onWheel}>
         <div key=${theme.themeId} class=${cx('ewheel__page', dir > 0 && 'is-from-right', dir < 0 && 'is-from-left', dx !== 0 && 'is-dragging')}
           style=${dx ? `transform:translateX(${dx}px)` : ''} role="group" aria-label=${t(theme.name)} data-theme=${theme.themeId}>
@@ -329,7 +336,7 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
       <div class="ewheel__dots" role="tablist" aria-label=${t('表情主题')}>
         ${EMOTE_THEMES.map((th, i) => html`<button key=${th.themeId} type="button" role="tab" class=${cx('ewheel__dot', i === page && 'is-on')}
           aria-selected=${i === page ? 'true' : 'false'} aria-label=${`${t(th.name)} ${i + 1}/${EMOTE_THEMES.length}`} onClick=${() => go(i)}></button>`)}
-      </div>
+      </div>`}
     </div>` : null}
   </div>`;
 }

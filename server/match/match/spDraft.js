@@ -5,7 +5,7 @@
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE, ERR } from '../../../shared/constants.js';
-import { generateDraft, applyCard, bountyBattles, isMultiRoundBounty, bountyCard } from '../choices.js';
+import { generateDraft, draftFundsCard, applyCard, bountyBattles, isMultiRoundBounty, bountyCard } from '../choices.js';
 import { onPickCard } from '../botEmotes.js';
 import { weightedPick } from '../waves.js';
 import { OK, fail, DELAYS } from './common.js';
@@ -15,17 +15,21 @@ const PERSONAL_OFFER_SIZE = 3;
 
 export class MatchSpDraft {
   enterSpDraft() {
-    const draft = generateDraft(this.gd, this.rngDraft, this.round, { stageId: this.stageId, bondAvailable: (bondId) => this.bondLive(bondId), itemAvailable: id => this.itemPool.canGain(id) });
     const alive = this.alivePlayers();
+    const draft = generateDraft(this.gd, this.rngDraft, this.round, {
+      stageId: this.stageId, bondAvailable: (bondId) => this.bondLive(bondId), itemAvailable: (id) => this.itemPool.canGain(id),
+      minimum: this.gd.teamScale > 1 ? alive.length + 2 : 0,
+    });
     if (!draft || !alive.length) { this.beforePrepOffers(); return; }
     this.phase = PHASE.SP_DRAFT;
     let order = alive.map((p) => p.playerId);
     if (!this.isSolo) this.rngDraft.shuffle(order);
     // 「AI 队友最后选择」 (GitHub #338): humans before AI seats, after the same shuffle (MatchPhases.humansFirst)
     order = this.humansFirst(order);
-    // untimed: solo and any single-human match (soloUntimed); the co-op order / 6 cards stay
+    // Solo and co-op with a single human retain their untimed draft.
     const untimed = this.soloUntimed;
-    this.sp = { ...draft, order, idx: 0, picks: {}, taken: {}, untimed, turnDeadline: 0 };
+    const repeatBounty = draft.family === 'bounty' && this.gd.startCount >= 6;
+    this.sp = { ...draft, order, idx: 0, picks: {}, repeatBounty, untimed, turnDeadline: 0 };
     this.setDeadline(0);
     this.startSpTurn();
     this.markPublic();
@@ -37,7 +41,16 @@ export class MatchSpDraft {
     return s.order[s.idx] ?? null;
   }
 
-  spCardAvailable(card) { return !!card && this.sp?.taken[card.idx] == null && (card.kind !== 'item' || this.itemPool.canGain(card.id)); }
+  spCardPickLimit(card) { return this.sp?.repeatBounty && card.kind === 'bounty' ? 2 : 1; }
+
+  spCardPickers(idx) {
+    return Object.entries(this.sp?.picks || {}).filter(([, pick]) => pick === idx).map(([id]) => id);
+  }
+
+  spCardAvailable(card) {
+    return !!this.sp && !!card && this.spCardPickers(card.idx).length < this.spCardPickLimit(card)
+      && (card.kind !== 'item' || this.itemPool.canGain(card.id));
+  }
 
   startSpTurn() {
     const s = this.sp;
@@ -47,6 +60,17 @@ export class MatchSpDraft {
       const ps = this.players.get(s.order[s.idx]);
       if (ps && ps.alive && s.picks[ps.playerId] == null) break;
       s.idx++;
+    }
+    if (this.gd.teamScale > 1 && s.family !== 'bounty') {
+      const remaining = s.order.slice(s.idx).filter((id) => this.players.get(id)?.alive && s.picks[id] == null).length;
+      let shortage = remaining - s.cards.filter((c) => this.spCardAvailable(c)).length;
+      for (const card of s.cards) {
+        if (shortage <= 0) break;
+        if (!this.spCardPickers(card.idx).length && !this.spCardAvailable(card)) {
+          s.cards[card.idx] = draftFundsCard(card.idx, s.family);
+          shortage--;
+        }
+      }
     }
     const available = s.cards.filter(c => this.spCardAvailable(c)).map(c => c.idx);
     if (s.idx >= s.order.length || !available.length) { this.setDeadline(0); this.later(0, () => this.finishSpDraft()); return; }
@@ -104,7 +128,6 @@ export class MatchSpDraft {
     const card = s.cards[idx];
     if (!card) return;
     s.picks[ps.playerId] = idx;
-    s.taken[idx] = ps.playerId;
     try { applyCard(this, ps, card); } catch (e) { this.reportError(`applyCard ${card.id}`, e); }
     this.markPrivate(ps);
     this.markPublic();

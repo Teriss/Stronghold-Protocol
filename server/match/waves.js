@@ -194,22 +194,25 @@ function scheduleRng(rng) {
   return createRng(seed);
 }
 
-/**
- * @param {import('./gamedata.js').GameData} gd
- * @param {Function} rng
- * @returns {{ stageId: string|null, factions: string[], bossId: string|null, hiddenBossId: string|null, typeSlots: string[], picks: object[] }}
- *   `factions` also carries the schedule as a non-enumerable `schedule` property ({ typeSlots, picks }), so callers
- *   that keep only the factions array (Match: buildNormalWave(gd, rng, this.factions, r)) get the official rounds.
- */
-export function setupMatchWaves(gd, rng) {
-  // stage
+/** Pick an active battlefield. Endless cycles prefer a different one. */
+export function pickBattleStage(gd, rng, previous = null) {
   const stageIds = Array.isArray(gd.mode.stages) ? gd.mode.stages : [];
-  const stagePairs = stageIds.map((id) => [id, gd.stage(id)]).filter(([, s]) => s && s.active !== false && Number(s.weight) > 0).map(([id, s]) => [id, s.weight]);
-  let stageId = stagePairs.length ? weightedPick(rng, stagePairs) : null;
-  if (!stageId) {
-    const any = Object.keys(gd.raw.stages || {}).filter((id) => gd.stage(id) && gd.stage(id).active);
-    stageId = any.length ? any.sort()[0] : null;
+  const weightedStages = (ids) => ids.map((id) => [id, gd.stage(id)])
+    .filter(([, s]) => s && s.active !== false && Number(s.weight) > 0).map(([id, s]) => [id, s.weight]);
+  const stagePairs = weightedStages(stageIds);
+  const active = Object.keys(gd.raw.stages || {}).filter((id) => gd.stage(id)?.active).sort();
+  if (previous) {
+    // Some difficulties normally allow just one battlefield. Use the other active battlefields for the endless reroll.
+    const pool = stagePairs.length > 1 ? stagePairs : weightedStages(active);
+    const alternatives = pool.filter(([id]) => id !== previous);
+    if (alternatives.length) return weightedPick(rng, alternatives);
   }
+  return stagePairs.length ? weightedPick(rng, stagePairs) : active[0] ?? null;
+}
+
+/** Draw the opening battlefield, factions, wave schedule and leaders. */
+export function setupMatchWaves(gd, rng) {
+  const stageId = pickBattleStage(gd, rng);
   // factions
   const types = gd.factions.types && typeof gd.factions.types === 'object' ? gd.factions.types : {};
   const n = specialTypeCount(gd);
@@ -338,7 +341,8 @@ function templateSpawns(gd, tpl, round, pick) {
       // enemy_exclude = enemy_9012_acloon): leader parts take them all; the leader takes ATK / speed but not HP — its HP
       // is the server pool, "领袖单位于服务器的生命值加成不受上述加成影响" (PRTS 下半). `supplyHpMul` (roundMods) rides along for
       // the 器物 hit-count units, which 补给线 / 补给线II leave out (archetypes.js `times`; also a 频次 enemy's death spawn)
-      mods: isBoss ? { atkMul: scale.atkMul, speedMul: scale.speedMul, slot } : { ...roundMods(scale), slot },
+      mods: isBoss ? { atkMul: scale.atkMul, speedMul: scale.speedMul, slot,
+        ...(gd.endlessEnemyMultiplier > 1 ? { hpMul: gd.endlessEnemyMultiplier } : {}) } : { ...roundMods(scale), slot },
       actionIndex: i,
       preview: previewInfo(gd, key, routes[routeIndex], isBoss, leader),
     };

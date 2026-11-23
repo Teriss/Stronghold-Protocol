@@ -1,7 +1,7 @@
 // Normative message catalogue (DESIGN §8). Used by server (validation) and client (building requests).
 // Every client→server message is `{ t, rid?, ...fields }`. Unknown `t` or invalid fields ⇒ ERR.BAD_MSG.
 
-import { DIFFICULTIES, NAME_MAX_LEN, ROOM_CODE_LEN, MAX_SEATS, EMOTES, GEO, REHEARSAL_MAX_CANDIDATES } from './constants.js';
+import { DIFFICULTIES, NAME_MAX_LEN, ROOM_CODE_LEN, MAX_SEATS, COOP_ROOM_CAPACITIES, MAX_CHOICE_CARDS, EMOTES, GEO, REHEARSAL_MAX_CANDIDATES } from './constants.js';
 import { isDroppableChess } from './standIn.js';
 import { diySlotIds, validateDiyPicks } from './diy.js';
 import { cultivatedStats, isPotential, isCultivate, POTENTIAL_DEFAULT, CULTIVATE_DEFAULT, hasPotentialData } from './potential.js';
@@ -13,6 +13,8 @@ import { LEADER_OPS_MAX } from './leaderOps.js';
 
 // ---- tiny validators -------------------------------------------------------
 const isInt = (v, lo = -Infinity, hi = Infinity) => Number.isInteger(v) && v >= lo && v <= hi;
+import { chatText } from './chat.js';
+
 const isStr = (v, max = 64) => typeof v === 'string' && v.length <= max;
 const isBool = (v) => typeof v === 'boolean';
 const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 64 && /^[A-Za-z0-9_\-.:]+$/.test(v);
@@ -40,7 +42,7 @@ const isPeerCandidate = (v) => isPlain(v) && isStr(v.candidate, 2048)
 // ---- client-side combat (DESIGN §14): b.progress / b.result payloads -------------------------------------------
 
 /** Size limits of a b.result payload (the whole frame also obeys the 64 KB inbound limit). */
-export const RESULT_LIMITS = Object.freeze({ players: 4, leaked: 400, unitsEnd: 64, unitStats: 160, layerGains: 40, mods: 16, unspawned: 400 });
+export const RESULT_LIMITS = Object.freeze({ players: MAX_SEATS, leaked: 400, unitsEnd: 64, unitStats: 160, layerGains: 40, mods: 16, unspawned: 400 });
 const BIG = 1e13;
 const isStat = (v) => v === undefined || isNum(v, 0, BIG);
 const isModVal = (v) => v === null || isNum(v, -BIG, BIG) || isStr(v, 64) || isBool(v);
@@ -521,7 +523,7 @@ export const C2S = {
   // the server applies `true` solely to a solo room of a version whose solo is timed, and ignores it otherwise, so a
   // default create stays the message it was.
   // modeId: an official mode of a laddered version's room mode (规程's solo: 极速模拟 / 规程等级 n); ignored elsewhere
-  'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), test: (v) => v === true, version: isVersionId, soloUnlimited: isBool, modeId: isId, $optional: ['test', 'difficulty', 'version', 'soloUnlimited', 'modeId'] },
+  'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), test: (v) => v === true, version: isVersionId, soloUnlimited: isBool, prepUnlimited: isBool, endless: isBool, modeId: isId, capacity: (v) => COOP_ROOM_CAPACITIES.includes(v), $optional: ['test', 'difficulty', 'version', 'soloUnlimited', 'prepUnlimited', 'endless', 'modeId', 'capacity'] },
   'room.join': { $optional: ['testAck'], testAck: (v) => v === true, code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
   'p2p.enable': { enabled: isBool },
   'p2p.signal': { epoch: isId, to: isId, description: isPeerDescription, candidate: isPeerCandidate, $optional: ['description', 'candidate'] },
@@ -622,13 +624,15 @@ export const C2S = {
   // unequip (DESIGN §34.15): one equipped item back to the hand, else the visible temp window. Official rooms refuse it.
   'g.unequip': { itemUid: isUid },
   'g.reward': { idx: (v) => isInt(v, 0, 5) },
-  'g.choice': { idx: (v) => isInt(v, 0, 5), choiceId: isId, $optional: ['choiceId'] },
+  'g.choice': { idx: (v) => isInt(v, 0, MAX_CHOICE_CARDS - 1), choiceId: isId, $optional: ['choiceId'] },
   // a plugin interaction window (PLUGIN API v2, docs/PLUGINS.md §10b): offerId is the window's declared id, idx the
   // slot picked; g.offerRefresh redraws one slot (the window's own `refresh.perSlot` bounds how often). The host
   // applies the window's declared effect primitive — a plugin never receives these messages itself.
   'g.offer': { offerId: isId, pluginId: isId, seq: (v) => isInt(v, 0, 1000000), cardId: optional(isId), idx: (v) => isInt(v, 0, PLUGIN_OFFER_SLOTS - 1) },
   'g.offerRefresh': { offerId: isId, pluginId: isId, seq: (v) => isInt(v, 0, 1000000), cardId: optional(isId), idx: (v) => isInt(v, 0, PLUGIN_OFFER_SLOTS - 1) },
   'g.ready': { ready: isBool },
+  'g.endlessVote': { cycle: (v) => Number.isSafeInteger(v) && v >= 1, agree: isBool },
+  'g.chat': { matchId: isId, text: (v) => chatText(v) !== null },
   'g.emote': { id: (v) => EMOTES.includes(v) },
   // playerId: the player tapped in the team panel (a 联防 / boss pair field shows two) — what an eliminated viewer or a
   // spectator seat follows from then on (Match.watchPref; community report of 2026-10-06, item 56)
@@ -691,7 +695,7 @@ export const S2C = [
   'welcome', 'ok', 'error', 'pong',
   'p2p.config', 'p2p.signal', 'p2p.frame',
   'room.state', 'room.closed',
-  'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
+  'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.chat', 'm.chat.history', 'm.result',
   // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)

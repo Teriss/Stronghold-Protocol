@@ -94,6 +94,7 @@ export const initialState = Object.freeze({
   match: emptyMatch(),
   ticker: [],
   emotes: [],
+  chat: null,
   clock: { offset: 0, rtt: null, synced: false },
   ui: { pendingJoin: null, restoring: false, buildStale: false },
   // official versions (DESIGN §35.23, versions.js): welcome.versions (null: the switch is off), this browser's lobby choice

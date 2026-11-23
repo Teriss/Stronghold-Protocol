@@ -140,7 +140,7 @@ export class FunnelFx {
   _on(U) { return U.skillOn != null ? U.skillOn : !!(U.v && this.w.skills.state(U.v).on); }
 
   /** Whether `key` can play (the effect was extracted). */
-  _has(key) { return !!key && this.w.ofx.lib.has(key); }
+  _has(key, v) { return !!this.w.resolveKey(v, key); }
 
   /** The unit's attack mode now (FxWiring.mode: the skill's mode while on, else Default). */
   _mode(U, v) {
@@ -188,15 +188,16 @@ export class FunnelFx {
         if (!f.idle || U.out.has(`${mode}|${f.i}`)) continue;
         let key = U.overload && f.overload ? f.overload : f.idle;
         if (back && f.back && !(U.overload && f.overload)) key = f.back;
-        if (!this._has(key)) continue;
-        out.push({ key, mount: this._mountOf(key), unit: f });
+        const actual = this.w.resolveKey(v, key);
+        if (!actual) continue;
+        out.push({ key, mount: this._mountOf(actual), unit: f });
       }
       return out;
     }
     if (d && d.modes.includes(mode)) return out;
     for (const g of U.plan.general) {
       if (!g.modes.includes(mode)) continue;
-      for (const e of g.idle) if (this._has(e.key)) out.push({ key: e.key, mount: e.mount, unit: null });
+      for (const e of g.idle) if (this._has(e.key, v)) out.push({ key: e.key, mount: e.mount, unit: null });
     }
     return out;
   }
@@ -209,7 +210,7 @@ export class FunnelFx {
 
   /** Play a one-shot of a unit on its home point (its appear / disappear). */
   _homeShot(U, key) {
-    if (!this._has(key) || !U.v) return null;
+    if (!U.v) return null;
     return this.w.playOn(key, U.v, { follow: true });
   }
 
@@ -358,7 +359,7 @@ export class FunnelFx {
       if (!f) continue;
       if (p.body) U.attachN = Math.max(U.attachN, Math.min(m.funnels.length, p.n - 1));
       const g = f.hits[0] || [];
-      for (const key of g) if (this.w.playOn(key, v, { flipFrom: U.v || undefined })) drew = true;
+      for (const key of g) if (this.w.playOn(key, v, { flipFrom: U.v || undefined, skinFrom: U.v })) drew = true;
       const o = U.out.get(`${p.mode}|${f.i}`);
       if (o) o.until = Math.max(o.until, this.w.ofx.time + LUNGE_S);
       else if (m.idle && k < this._count(U, m)) this._leave(U, p.mode, f, this.w.ofx.time + LUNGE_S);
@@ -406,19 +407,19 @@ export class FunnelFx {
     let drew = false;
     // the hit prefab carries the unit beside the target — AttachToTarget at its HitPoint: it goes where the enemy goes —,
     // moved by its FunnelHitEffect's random range (±x, ±y in the battle frame) once per hit
-    const skin = this.w.skinOf(this.w.unitOf(tgt));
+    const skin = this.w.skinOfView(tgt);
     o.seed = (o.seed || 0) + 1;
     for (const key of g) {
-      const j = this._jitter(key, `${U.id}|${f.i}`, o.seed);
+      const j = this._jitter(this.w.resolveKey(v, key), `${U.id}|${f.i}`, o.seed);
       const track = tgt.info ? (fx) => {
         if (alive(tgt)) unitPoint(skin, 'hit', this.w.pose(tgt), fx.anchor);
         else if (fx.jit) return;
         fx.anchor[0] += j[0]; fx.anchor[1] += j[1]; fx.anchor[2] += j[2]; fx.jit = true;
       } : null;
-      const h = this.w.playOn(key, tgt, { flipFrom: v, loop: true, important: true, track });
+      const h = this.w.playOn(key, tgt, { flipFrom: v, skinFrom: v, loop: true, important: true, track });
       if (h) { drew = true; o.hit = h; }
     }
-    return drew || g.some((k) => this._has(k));
+    return drew || g.some((k) => this._has(k, U.v));
   }
 
   /** A hit prefab's FunnelHitEffect offset (its `_randomRange`, uniform ±), seeded by the unit and its hit count. */
@@ -439,7 +440,7 @@ export class FunnelFx {
     const v = U.v;
     if (!d || !v || !(n > 0)) return false;
     const first = !U.s3;
-    if (first) U.s3 = { drones: [], n: 0, drawable: d.units.some((u) => this._has(u.main)) };
+    if (first) U.s3 = { drones: [], n: 0, drawable: d.units.some((u) => this._has(u.main, v)) };
     const a0 = DIR_ANGLE[String(v.dir || '').toUpperCase()] ?? ((v.visFacing ?? 1) < 0 ? Math.PI : 0);
     for (let i = 0; i < n; i++) {
       const a = a0 + (2 * Math.PI * i) / n;
@@ -464,8 +465,8 @@ export class FunnelFx {
 
   /** A dispersed unit's flying effect, placed each frame at the unit and turned along its heading. */
   _flight(U, dr) {
-    const key = dr.unit?.main;
-    if (!this._has(key)) return null;
+    const key = this.w.resolveKey(U.v, dr.unit?.main);
+    if (!key) return null;
     const def = this.w.ofx.lib.def(key);
     const pos = this._flyPos(dr);
     return this.w.ofx.spawn(key, { pos, groundZ: pos[2], rootRot: [0, 0, 0, 1] }, {
@@ -483,8 +484,7 @@ export class FunnelFx {
   /** The Unity point of a dispersed unit: its target's HitPoint while latched, else FLY_H over the ground under it. */
   _flyPos(dr) {
     if (dr.phase === 'lock' && dr.t && alive(dr.t)) {
-      const u = this.w.unitOf(dr.t);
-      return unitPoint(this.w.skinOf(u), 'hit', this.w.pose(dr.t), [0, 0, 0]);
+      return unitPoint(this.w.skinOfView(dr.t), 'hit', this.w.pose(dr.t), [0, 0, 0]);
     }
     const hAt = this.w.ofx.ctx?.heightAt;
     const g = typeof hAt === 'function' ? Math.max(0, Number(hAt(Math.round(dr.y), Math.round(dr.x))) || 0) : 0;
@@ -505,20 +505,20 @@ export class FunnelFx {
     }
     if (!best) return true;
     if (best.t && !alive(best.t)) this._lost(U, best);
-    this._marks(best, null);
+    this._marks(U, best, null);
     best.t = tgt || null;
     best.phase = tgt ? 'chase' : 'seek';
     best.v = S3.chase.v0;
     best.orbit = null;
-    if (tgt && this._has(U.plan.dispersed.marks.trace)) best.trace = this.w.playOn(U.plan.dispersed.marks.trace, tgt, { follow: true, loop: true, important: true });
+    if (tgt && this._has(U.plan.dispersed.marks.trace, U.v)) best.trace = this.w.playOn(U.plan.dispersed.marks.trace, tgt, { follow: true, loop: true, important: true, skinFrom: U.v });
     return true;
   }
 
   /** Stop a dispersed unit's marks (and start the latched one on `tgt`). */
-  _marks(dr, latchOn) {
+  _marks(U, dr, latchOn) {
     if (dr.trace && !latchOn) { dr.trace.stop(); dr.trace = null; }
     if (dr.latched) { dr.latched.stop(); dr.latched = null; }
-    if (latchOn && this._has(dr.latchedKey)) dr.latched = this.w.playOn(dr.latchedKey, latchOn, { follow: true, loop: true, important: true });
+    if (latchOn) dr.latched = this.w.playOn(dr.latchedKey, latchOn, { follow: true, loop: true, important: true, skinFrom: U.v });
   }
 
   /** A unit's target fell or left: it reappears near that spot and waits for its next lock (the sim's draw is its own). */
@@ -528,7 +528,7 @@ export class FunnelFx {
     dr.x = at.x + (rnd(U.id, dr.seed * 7 + 1) * 2 - 1) * h;
     dr.y = at.y + (rnd(U.id, dr.seed * 7 + 2) * 2 - 1) * h;
     dr.seed += 3;
-    this._marks(dr, null);
+    this._marks(U, dr, null);
     dr.t = null; dr.phase = 'seek'; dr.orbit = null; dr.idleT = 0;
   }
 
@@ -568,7 +568,7 @@ export class FunnelFx {
           continue;
         }
         dr.phase = 'lock';
-        this._marks(dr, dr.t);
+        this._marks(U, dr, dr.t);
       }
       if (dr.phase === 'lock' && dr.t) { dr.x = dr.t.x; dr.y = dr.t.y; }
     }
@@ -588,8 +588,8 @@ export class FunnelFx {
       if (d < bd) { bd = d; best = dr; }
     }
     if (best) {
-      if (best.phase === 'chase') { best.phase = 'lock'; this._marks(best, best.t); }
-      for (const key of best.unit?.hits?.[0] || []) this.w.playOn(key, best.t, { flipFrom: U.v || undefined });
+      if (best.phase === 'chase') { best.phase = 'lock'; this._marks(U, best, best.t); }
+      for (const key of best.unit?.hits?.[0] || []) this.w.playOn(key, best.t, { flipFrom: U.v || undefined, skinFrom: U.v });
       return U.s3.drawable;
     }
     // a free unit's pulse (the sim's place, once a second): the nearest one drifts halfway there
@@ -606,7 +606,7 @@ export class FunnelFx {
   /** The skill ended (or the unit left): the dispersed units vanish, their marks stop. */
   _endS3(U) {
     if (!U.s3) return;
-    for (const dr of U.s3.drones) { dr.h?.stop(); this._marks(dr, null); }
+    for (const dr of U.s3.drones) { dr.h?.stop(); this._marks(U, dr, null); }
     U.s3 = null;
     U.appearNext = true;
   }
@@ -674,7 +674,7 @@ export class FunnelFx {
     }
     if (kind === 'overload') {
       const m = this._remoteMode(U);
-      if (!m || !m.funnels.some((f) => (f.overload && this._has(f.overload)) || (f.overloadHits || []).some((g) => g.some((k) => this._has(k))))) return false;
+      if (!m || !m.funnels.some((f) => (f.overload && this._has(f.overload, U.v)) || (f.overloadHits || []).some((g) => g.some((k) => this._has(k, U.v))))) return false;
       U.overload = true;
       for (const [, t] of U.home) t.h.kill();   // the overload look replaces the home loop
       U.home.clear();
@@ -698,7 +698,11 @@ export class FunnelFx {
 
   /** Whether any of the unit's floating-unit effects was extracted. */
   _drawable(U) {
-    if (U.drawable === undefined) U.drawable = planKeys(U.plan, this.w.idx.projectiles).some((k) => this._has(k));
+    const skin = U.v?.info?.skin;
+    if (U.drawable === undefined || U.drawableSkin !== skin) {
+      U.drawable = planKeys(U.plan, this.w.idx.projectiles).some((k) => this._has(k, U.v));
+      U.drawableSkin = skin;
+    }
     return U.drawable;
   }
 
@@ -753,7 +757,7 @@ export class FunnelFx {
     for (const o of U.out.values()) o.hit?.stop();
     U.out.clear();
     U.pend.clear();
-    if (U.s3) { for (const dr of U.s3.drones) { dr.h?.stop(); this._marks(dr, null); } U.s3 = null; }
+    if (U.s3) { for (const dr of U.s3.drones) { dr.h?.stop(); this._marks(U, dr, null); } U.s3 = null; }
     U.overload = false;
     U.lastT = null;
     if (reset) { U.attachN = 0; U.skillOn = null; U.remoteN = 0; U.appearNext = false; }

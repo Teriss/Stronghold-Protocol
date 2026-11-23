@@ -28,7 +28,8 @@ carrying its file's content hash):
                        template actions that cast them, our data's talent ids); per skill its effects with their
                        roles (start / loop / range / hit / end …, from the skill prefab and the buff templates, with
                        the buffs' lives), its abilities' projectiles and the mode it switches to; the projectiles; the
-                       generic keys (hits, deaths, deploy, status loops)
+                       generic keys (hits, deaths, deploy, status loops); optional skinFx mappings and mount points
+                        from battle skin prefabs (extract.py --fx-skins)
   textures.json        texture key → size, wrap, filter, alpha, the WebP or PNG files
   prefabs/<file>.json  one descriptor per effect prefab: nodes (Unity-native transforms), ParticleSystems (every
                        enabled module), renderers, materials (shader name + resolved render state), decoded clips,
@@ -2426,6 +2427,124 @@ def skin_points(env, rel, prefab, graphic, container=None):
     return points
 
 
+SKIN_ROOT = 'dyn/battle/prefabs/skins/character'
+SKIN_HOOKER = ('Torappu.Battle', 'CharacterSkinHooker')
+
+
+def official_skin_ids(root, table=None):
+    """Map case-folded IDs to the exact runtime spelling, favoring the supplied official table."""
+    sources = (Path(root) / 'data/skins.json', Path(root) / '.cache/gamedata/excel/skin_table.json')
+    if table is not None:
+        # A requested table is not silently ignored (e.g. a misspelled path).
+        explicit = json.loads(Path(table).read_text(encoding='utf-8-sig'))
+        if not isinstance(explicit, dict) or not isinstance(explicit.get('charSkins'), dict):
+            raise ValueError(f'expected a skin_table.json with charSkins: {table}')
+    else:
+        explicit = {}
+    ids = {}
+    for doc in [*(_read_json(path) or {} for path in sources), explicit]:
+        if not isinstance(doc, dict):
+            continue
+        for sid in (doc.get('charSkins') or {}):
+            ids[sid.casefold()] = sid
+        chars = doc.get('chars') or {}
+        for rec in chars.values() if isinstance(chars, dict) else ():
+            items = rec if isinstance(rec, list) else (rec.get('skins', []) if isinstance(rec, dict) else [])
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get('id'), str):
+                    sid = item['id']
+                    ids[sid.casefold()] = sid
+    return ids
+
+
+def skin_id(cid, prefab, authored_name, official):
+    """Container names are lowercase, but the prefab's GameObject usually retains the original spelling."""
+    sid = f'{cid}@{prefab[len(cid) + 1:]}'
+    if isinstance(authored_name, str) and authored_name.casefold() == prefab.casefold():
+        sid = f'{cid}@{authored_name[len(cid) + 1:]}'
+    return official.get(sid.casefold(), sid)
+
+
+def skin_hooks(ab_root, cabs, units, official, log):
+    """Read only the selected operators' battle skins from the same active AB root as normal effects."""
+    out = {}
+    packs = 0
+    for cid, unit in sorted(units.items()):
+        if not cid.startswith('char_'):
+            continue
+        rel = f'skinpack/{cid}.ab'
+        if not (Path(ab_root) / rel).is_file():
+            continue
+        packs += 1
+        env = AssetEnv(ab_root, cabs)
+        try:
+            prefabs = env.prefabs(rel, full=True)
+        except Exception as e:
+            log(f'  FAIL skin pack {cid}: {e!r}')
+            continue
+        for path, go in sorted(prefabs.items()):
+            folder, _, file = path.rpartition('/')
+            if folder != f'{SKIN_ROOT}/{cid}' or not file.startswith((cid + '_', cid + '@')):
+                continue
+            prefab = file.removesuffix('.prefab')
+            if not file.endswith('.prefab') or not prefab[len(cid) + 1:]:
+                continue
+            try:
+                replace, fakes = {}, []
+                stack = [go]
+                while stack:
+                    cur = stack.pop()
+                    for component in env.tt(cur).get('m_Component', []):
+                        f, o = env.resolve(cur.assets_file, component.get('component'))
+                        if o is None or f == 'builtin' or o.type.name != 'MonoBehaviour':
+                            continue
+                        cls = env.script(o)
+                        if cls == SKIN_HOOKER:
+                            hook = env.tt(o)
+                        elif cls == ('', '?'):
+                            # The hot update may not have downloaded the MonoScript CAB, even though the
+                            # bundle has a full typetree. Accept only the complete Hooker field signature.
+                            try:
+                                hook = env.tt(o)
+                            except Exception:
+                                continue
+                            if not {'_replaceEffectPairs', '_useFakeProjectile', '_fakeProjectileConfigs'} <= hook.keys():
+                                continue
+                        else:
+                            continue
+                        for pair in hook.get('_replaceEffectPairs') or []:
+                            a, b = pair.get('fromEffect'), pair.get('toEffect')
+                            if isinstance(a, str) and isinstance(b, str) and a and b:
+                                replace[a.lower()] = b.lower()
+                        for q in hook.get('_fakeProjectileConfigs') or []:
+                            fakes.append({k.lstrip('_'): v for k, v in q.items() if isinstance(v, (str, int))})
+                    stack.extend(go_children(env, cur))
+                graphic = unit.get('graphic')
+                points = skin_points(env, rel, prefab, graphic, container=path)
+                sid = skin_id(cid, prefab, env.tt(go).get('m_Name'), official)
+                if replace or fakes or points:
+                    out[sid] = {'source': f'{rel} {prefab}',
+                                **({'replace': dict(sorted(replace.items()))} if replace else {}),
+                                **({'fakeProjectiles': fakes} if fakes else {}),
+                                **({'points': points, 'graphic': graphic} if points else {})}
+            except Exception as e:
+                log(f'  FAIL skin {path}: {e!r}')
+    log(f'fx: {len(out)} battle skins from {packs} skin packs '
+        f'({sum(len(e.get("replace", {})) for e in out.values())} effect replacement pairs)')
+    return out
+
+
+def skin_referenced(skin_fx, effects):
+    """Export both sides: the default skin still needs the base effect. Projectile-only keys aren't FX prefabs."""
+    keys = set()
+    for entry in skin_fx.values():
+        for base, variant in entry.get('replace', {}).items():
+            keys.update((base, variant))
+        for q in entry.get('fakeProjectiles', []):
+            keys.update(v.lower() for v in q.values() if isinstance(v, str) and v.lower() in effects)
+    return keys
+
+
 def strings_of(v, out):
     """all_strings without the fields that name animations or sounds (NOT_EFFECT_FIELDS)."""
     if isinstance(v, dict):
@@ -3208,7 +3327,7 @@ def _read_json(path):
 
 
 def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, jobs=None, root=None, fx_manifest=None,
-              texture_format='webp', add_only=False):
+              texture_format='webp', add_only=False, include_skins=False, skin_table=None, cache_dir=None):
     """The fx run (extract.py --only fx): writes <out_root>/fx/** and `fx_manifest` (default <root>/data/local-fx.json:
     the groups FX_GROUPS, every file); returns the number of files written. `manifest` (the groups of
     data/local-assets.json) gets nothing: extract.py drops the fx groups an earlier run left there (ran_groups). A
@@ -3218,6 +3337,8 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
     ab_root = Path(ab_root)
     root = Path(root) if root else Path(__file__).resolve().parents[2]
     fx_manifest = Path(fx_manifest) if fx_manifest else root / 'data' / FX_MANIFEST
+    cache_dir = Path(cache_dir) if cache_dir else root / '.cache/fx'
+    official = official_skin_ids(root, skin_table) if include_skins else {}
     jobs = max(1, jobs or min(8, os.cpu_count() or 2))
     out = Path(out_root) / FX_SUB
     out.mkdir(parents=True, exist_ok=True)
@@ -3228,7 +3349,7 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
 
     t0 = time.time()
     cabs = scan_cabs(ab_root)
-    eff = container_index(ab_root, EFFECT_GLOBS, root / '.cache/fx/effects.json', jobs, log)
+    eff = container_index(ab_root, EFFECT_GLOBS, cache_dir / 'effects.json', jobs, log)
     timings['index'] = time.time() - t0
     log(f'fx: {len(eff)} effect prefabs in the client ({client_version(ab_root)}), {len(cabs)} bundle CABs scanned')
 
@@ -3242,11 +3363,13 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
         unit_ids = gd['chars'] + gd['enemies'] + gd['tokens']
     if add_only:
         unit_ids = [uid for uid in unit_ids if uid not in ((previous or {}).get('units') or {})]
-    enemy_idx = container_index(ab_root, (ENEMY_GLOB,), root / '.cache/fx/enemies.json', jobs, log) \
+    enemy_idx = container_index(ab_root, (ENEMY_GLOB,), cache_dir / 'enemies.json', jobs, log) \
         if any(u.startswith('enemy_') for u in unit_ids) else {}
-    token_idx = container_index(ab_root, (TOKEN_GLOB,), root / '.cache/fx/tokens.json', jobs, log) \
+    token_idx = container_index(ab_root, (TOKEN_GLOB,), cache_dir / 'tokens.json', jobs, log) \
         if any(not u.startswith(('char_', 'enemy_')) for u in unit_ids) else {}
     units, projectiles, skills, skins, referenced = crawl_units(ab_root, cabs, unit_ids, gd, eff, enemy_idx, token_idx, log)
+    skin_fx = skin_hooks(ab_root, cabs, units, official, log) if include_skins else {}
+    referenced |= skin_referenced(skin_fx, eff)
     timings['units'] = time.time() - t0
 
     generic = {v for group in FX_GENERIC.values() for v in group.values()}
@@ -3308,6 +3431,7 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
                                                zip(('units', 'projectiles', 'skills', 'skins'), (units, projectiles, skills, skins)))
         else:
             units, projectiles, skills, skins = (prev.get(x) or {} for x in ('units', 'projectiles', 'skills', 'skins'))
+        skin_fx = {**(prev.get('skinFx') or {}), **skin_fx}
         summaries = {**(prev.get('prefabs') or {}), **summaries}
         old_textures = (_read_json(out / 'textures.json') or {}).get('textures') or {}
         tex_all = {**textures, **old_textures} if add_only else {**old_textures, **textures}
@@ -3326,6 +3450,8 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
         'generic': {**FX_GENERIC, 'keys': sorted(k for k in generic if k in summaries)},
         'prefabs': dict(sorted(summaries.items())),
     }
+    if skin_fx:
+        index['skinFx'] = dict(sorted(skin_fx.items()))
     write_atomic(out / 'index.json', json.dumps(index, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
     write_atomic(out / 'textures.json', json.dumps({'format': 'fx-textures', 'version': FORMAT_VERSION,
                                                    'textures': dict(sorted(tex_all.items()))}, separators=(',', ':')).encode('utf-8'))

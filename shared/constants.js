@@ -18,7 +18,10 @@ export const DEV_BUILD = /-dev$/.test(APP_VERSION);
  */
 export const PLUGIN_API = Object.freeze({ current: 2, min: 1 });
 
-export const MAX_SEATS = 4;
+export const COOP_ROOM_CAPACITIES = Object.freeze([4, 6, 8]);
+export const DEFAULT_COOP_CAPACITY = COOP_ROOM_CAPACITIES[0];
+export const MAX_SEATS = COOP_ROOM_CAPACITIES.at(-1);
+export const MAX_CHOICE_CARDS = MAX_SEATS + 2;
 /**
  * Spectator seats of a co-op room (community report #26, owner's decision 2026-10-04) — a remake feature: the official
  * room has 1–4 players and no spectator seat (there only eliminated players and 联防 bystanders watch, research 09 §3.1).
@@ -62,13 +65,14 @@ export const PHASE = Object.freeze({
   SETTLE: 'SETTLE',
   FINAL_ASSAULT: 'FINAL_ASSAULT',
   HIDDEN_CORE: 'HIDDEN_CORE',
+  ENDLESS_VOTE: 'ENDLESS_VOTE',
   RESULT: 'RESULT',
 });
 
 export const PHASE_NAMES = {
   LOBBY: N_('等待中'), INFO_CHECK: N_('确认本局信息'), BAND_DRAFT: N_('选择策略'), CUSTOM_CHECK: N_('选择自编'), BATTLE_CHECK: N_('协议启动'),
   ROUND_START: N_('回合开始'), SP_DRAFT: N_('机变阶段'), PREP: N_('休整期'), COMBAT: N_('作战中'), UNITE: N_('联防阶段'),
-  SETTLE: N_('结算'), FINAL_ASSAULT: N_('最终攻势'), HIDDEN_CORE: N_('隐秘核心'), RESULT: N_('模拟结束'),
+  SETTLE: N_('结算'), FINAL_ASSAULT: N_('最终攻势'), HIDDEN_CORE: N_('隐秘核心'), ENDLESS_VOTE: N_('续轮投票'), RESULT: N_('模拟结束'),
 };
 
 // Board geometry on the 19x21 stage grid (row 0 = bottom). See DESIGN §3.

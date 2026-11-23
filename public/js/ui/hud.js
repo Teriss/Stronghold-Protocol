@@ -513,6 +513,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const roundText = hidden ? '??' : pub?.round > 0 ? String(pub.round) : '--';
   // a spectator seat (no m.private, community report #26) never readies
   const showReady = phase === PHASE.PREP && !spectator && priv?.alive !== false;
+  const waitForTeam = phase === PHASE.PREP && pub?.prepUnlimited === true;
   // boss rounds: the overtime warning follows the clock (4 Hz while live; frozen while paused)
   const otLive = boss && Number(pub?.overtimeAt) > 0;
   useTicker(otLive && frozenAt == null ? 250 : 0);
@@ -533,7 +534,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const pfRemain = pf.countdown ? (frozenSecs != null ? frozenSecs : secondsLeft(pub?.deadline)) : null;
   // untimed: the solo rest shows the pack's single-player picture (content_single_plain); elsewhere nothing, like the
   // hand-made countdown (user playtest #4 item 3)
-  const pfClock = pf.countdown && (pfRemain != null || (phase === PHASE.PREP && (playerCount ?? 1) <= 1));
+  const pfClock = !waitForTeam && pf.countdown && (pfRemain != null || (phase === PHASE.PREP && (playerCount ?? 1) <= 1));
   const corner = useMemo(() => (pf.countdown && pf.ready ? cornerOffset(pack) : null), [pack, pf.countdown, pf.ready]);
   useTicker(pf.countdown && frozenSecs == null && pfRemain != null ? 1000 : 0);
   const onLeft = () => (pen ? onPen(false) : onDrawer('info'));
@@ -593,8 +594,11 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
     </div>
 
     <div class="gtop__right">
+      ${pub?.endless ? html`<span class="gtop__endless">${t('无尽第 {n} 轮', { n: pub.endless.cycle })}</span>` : null}
       <div class=${cx('gtop__clock', pf.countdown && 'gtop__clock--pf')} style=${corner ? { '--pf-rx': corner.x, '--pf-ry': corner.y } : null}>
-        ${pf.countdown
+        ${waitForTeam ? html`<span class="gtop__team-ready" role="status" data-testid="prep-wait-team">
+            ${t('等待全员就绪')} <b class="num">${readyCount}/${playerCount}</b>
+          </span>` : pf.countdown
           ? (pfClock ? html`<div class="pfclock" role="timer" aria-label=${pfRemain == null ? t('无倒计时') : t('剩余{remain}秒', { remain: pfRemain })}>
               <${RegCountdown} pack=${pack} remain=${pfRemain} total=${total ?? null} ready=${showReady && !!priv?.ready} still=${!settings?.themeMotion} />
             </div>` : null)
@@ -605,7 +609,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         ${corner && pfClock && showReady ? html`<${ReadyToggle} priv=${priv} onToggle=${onReady} busy=${readyBusy} readyCount=${readyCount} total=${playerCount} pack=${pack} corner=${true} />` : null}
       </div>
       <${OvertimeWarning} ot=${ot} />
-      ${showReady && !(corner && pfClock) ? html`<${ReadyToggle} priv=${priv} onToggle=${onReady} busy=${readyBusy} readyCount=${readyCount} total=${playerCount} pack=${pf.ready ? pack : null} />` : null}
+      ${showReady && !(corner && pfClock) ? html`<${ReadyToggle} priv=${priv} onToggle=${onReady} busy=${readyBusy} readyCount=${readyCount} total=${waitForTeam ? null : playerCount} pack=${pf.ready ? pack : null} />` : null}
     </div>
   </header>`;
 }

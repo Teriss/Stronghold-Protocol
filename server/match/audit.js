@@ -359,16 +359,17 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     const s = m.sp;
     if (m.phase === PHASE.SP_DRAFT && s) check('sp draft', () => {
       const alive = m.alivePlayers().map((p) => p.playerId);
-      const want = m.isSolo ? 3 : 6;
+      const want = m.isSolo ? 3 : gd.teamScale > 1 && s.family !== 'bounty' ? Math.max(6, s.order.length + 2) : 6;
       if (s.cards.length > want) fail(`${s.cards.length} 机变 cards (max ${want})`);
-      if (s.order.length !== alive.length) fail(`机变 order ${s.order.length} for ${alive.length} alive`);
       for (const pid of alive) {
         const idx = s.picks[pid];
+        if (!s.order.includes(pid)) fail(`${pid} missing from 机变 order`);
         if (idx == null) fail(`${pid} ends 机变 without a card`);
-        else if (s.taken[idx] !== pid) fail(`${pid} picked card ${idx} held by ${s.taken[idx]}`);
+        else if (!s.cards[idx]) fail(`${pid} has an invalid 机变 pick`);
       }
-      const holders = Object.values(s.taken);
-      if (new Set(holders).size !== holders.length) fail('a player took two 机变 cards');
+      for (const card of s.cards) {
+        if (m.spCardPickers(card.idx).length > m.spCardPickLimit(card)) fail(`too many picks for 机变 card ${card.idx}`);
+      }
     });
     return orig();
   });
@@ -377,7 +378,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     runInvariants();
     check('prep', () => {
       if (m.phase !== PHASE.PREP) return;
-      if (m.soloUntimed) { if (m.deadline) fail('untimed prep is timed'); } else if (!m._prepEndQueued) expectDeadline(gd.prepTime(m.round), 'PREP');
+      if (m.soloUntimed || m.prepUnlimited) { if (m.deadline) fail('untimed prep is timed'); } else if (!m._prepEndQueued) expectDeadline(gd.prepTime(m.round), 'PREP');
     });
     return res;
   });

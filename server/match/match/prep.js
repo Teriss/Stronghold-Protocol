@@ -43,8 +43,7 @@ export class MatchPrep {
       this.dispatch(ps, 'onPrepStart', { round: this.round });
       ps.recompute();
     }
-    // solo / single-human matches: untimed (soloUntimed); co-op: the round's prepTime
-    const secs = this.soloUntimed ? null : this.gd.prepTime(this.round);
+    const secs = this.soloUntimed || this.prepUnlimited ? null : this.gd.prepTime(this.round);
     this.setDeadline(secs, () => this.prepDeadline());
     let i = 0;
     for (const ps of alive) if (ps.botControlled) this.scheduleBotPrep(ps, i++);

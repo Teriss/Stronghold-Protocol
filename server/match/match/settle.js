@@ -151,6 +151,7 @@ export class MatchSettle {
     if (this.test && this._testApplying) { this._testOutcome = { victory, hiddenCleared, reason }; return; }
     if (this.ended || this.disposed) return;
     this.offersDispose();
+    this.endlessVote = null;
     this.ended = true;
     this.externalAI?.close();
     if (this.runner) { try { this.runner.stop(); } catch { /* ignore */ } this.runner = null; }

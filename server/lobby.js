@@ -179,7 +179,7 @@
 //     ends with summary.reason 'plugin-crash' | 'plugin-hang' | 'plugin-start' and the room is back in its lobby.
 //   * Spectator seats (community report #26, owner's decision 2026-10-04 — a remake feature, the official room has none):
 //     room.spectate { code } takes one of a co-op room's MAX_SPECTATORS (2) spectator seats, in its lobby or while its
-//     match runs (▸ solo rooms: ROOM_FULL). A spectator is not a player: never in `seats`, never counted for the 1–4 players
+//     match runs (▸ solo rooms: ROOM_FULL). A spectator is not a player: never in `seats`, never counted against the player capacity
 //     or the start gate, never host, never keeps a room alive (a room whose last human leaves closes with room.closed
 //     {empty} for its spectators). It receives room.state (`spectators: [{ playerId, name, connected }]`) and every match
 //     broadcast (m.public, m.ticker, m.emote, b.pool — public data); the match registers it (opts.spectators /
@@ -234,8 +234,9 @@
 //     another content keeps only the ids whose operator (charId) is the same in both data sets.
 
 import { aiTakeover, resetAiTakeover, reconcileAiTakeover, afterReconcile } from './aiTakeover.js';
-import { randomBytes, randomInt } from 'node:crypto';
-import { DIFFICULTIES, ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { chatText, CHAT_HISTORY_LIMIT, CHAT_COOLDOWN_MS } from '../shared/chat.js';
+import { DIFFICULTIES, ERR, COOP_ROOM_CAPACITIES, DEFAULT_COOP_CAPACITY, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges, checkSkinSelection, operatorCharIds } from '../shared/protocol.js';
 import { encode, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -382,7 +383,7 @@ export class Room {
    * @param {string} code @param {'solo'|'coop'} mode @param {string} difficulty @param {number} now
    * @param {string} [version] the official version the room plays (header "Official versions")
    */
-  constructor(code, mode, difficulty, now, version = DEFAULT_VERSION) {
+  constructor(code, mode, difficulty, now, version = DEFAULT_VERSION, capacity = DEFAULT_COOP_CAPACITY) {
     this.code = code;
     this.mode = mode;
     this.difficulty = difficulty;
@@ -410,6 +411,8 @@ export class Room {
      * opts.soloUnlimited. room.state omits the key unless this is true.
      */
     this.soloUnlimited = false;
+    this.prepUnlimited = false;
+    this.endless = false;
     /**
      * The official mode of a laddered room (header "Official versions": 规程's solo plays 规程等级 1–20 and 极速模拟, more
      * modes than one per difficulty — versions.laddered); null elsewhere, where the difficulty names the mode. room.state
@@ -420,19 +423,20 @@ export class Room {
     /** @type {string | null} */
     this.hostId = null;
     /** @type {(Seat | null)[]} */
-    this.seats = new Array(MAX_SEATS).fill(null);
+    this.capacity = mode === 'solo' ? 1 : capacity;
+    this.seats = new Array(this.capacity).fill(null);
     /** @type {{ playerId: string, name: string, connected: boolean, content?: 'ready' | 'failed' | null, contentGen?: number }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
     this.spectators = [];
     /** @type {any} running Match instance */
     this.match = null;
-    /** @type {{ live: boolean, ended: boolean, disposed: boolean, match: any } | null} */
+    /** @type {{ live: boolean, ended: boolean, disposed: boolean, match: any, chat?: { id: string, seq: number, messages: any[], last: Map<string, number> } | null } | null} */
     this.matchCtx = null;
     this.matchCount = 0;
     /** @type {any} summary passed to onEnd by the last match */
     this.lastSummary = null;
     /**
      * Frames of the last match's end, replayed on resync to humans who have not moved on yet.
-     * @type {{ publicFrame: string | null, frames: Map<string, string>, pending: Set<string> } | null}
+     * @type {{ publicFrame: string | null, frames: Map<string, string>, pending: Set<string>, chat?: string|null, chatMembers?: Set<string> } | null}
      */
     this.replay = null;
     /** @type {string[] | null} plugins of the room's set that changed on disk — the host not told yet (Lobby.pluginsChanged) */
@@ -494,9 +498,11 @@ export class Room {
       code: this.code,
       hostId: this.hostId,
       mode: this.mode,
+      capacity: this.capacity,
       difficulty: this.difficulty,
       aiPicksLast: this.aiPicksLast,
       inMatch: !!this.match,
+      ...(this.matchCtx?.chat ? { chatId: this.matchCtx.chat.id } : {}),
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left,
           // a room with gameplay plugins (header "Gameplay plugins"): has this player's page loaded and checked its content?
@@ -519,6 +525,8 @@ export class Room {
       ...(this.test ? { test: true } : {}),
       // 「不限时」 (header): omitted unless on, so a default room.state stays identical
       ...(this.soloUnlimited === true ? { soloUnlimited: true } : {}),
+      ...(this.prepUnlimited === true ? { prepUnlimited: true } : {}),
+      ...(this.endless ? { endless: true } : {}),
       // a laddered room's official mode (规程's solo): omitted elsewhere, so a default room.state stays identical
       ...(this.modeId ? { modeId: this.modeId } : {}),
     };
@@ -950,7 +958,10 @@ export class Lobby {
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
-  create(session, { mode, difficulty: asked, test, version: askedVersion, soloUnlimited, modeId: askedMode } = {}) {
+  create(session, { mode, difficulty: asked, test, version: askedVersion, soloUnlimited, prepUnlimited, endless, modeId: askedMode, capacity = DEFAULT_COOP_CAPACITY } = {}) {
+    if (!COOP_ROOM_CAPACITIES.includes(capacity) || (mode === 'solo' && capacity !== DEFAULT_COOP_CAPACITY)) return fail(ERR.BAD_MSG, 'invalid room capacity');
+    if (prepUnlimited === true && mode !== 'coop') return fail(ERR.BAD_MSG, 'unlimited preparation is a co-op room option');
+    if (endless === true && mode !== 'coop') return fail(ERR.BAD_MSG, 'endless is a co-op room option');
     // A test room exists only when the process switch allowed it. The check runs before the room is built.
     if (test === true && this.testEnabled !== true) return fail(ERR.TEST_DISABLED);
     // the official version (header "Official versions"): left out, the server's default
@@ -1007,7 +1018,7 @@ export class Lobby {
       } else initial = r.content;
     }
     if (cur) this.removeMember(cur, session.playerId);
-    const room = new Room(code, mode, difficulty, this.now(), version);
+    const room = new Room(code, mode, difficulty, this.now(), version, capacity);
     // a laddered version (规程's solo): the asked official mode, else the first of the difficulty (标准 → 规程等级1); the
     // room's difficulty follows the mode (极速模拟's FAST counts as 标准)
     if (this.laddered(version, mode)) {
@@ -1019,6 +1030,8 @@ export class Lobby {
     // 「不限时」 only on a solo room of a version whose solo is timed (header). Anywhere else the key is ignored, so a
     // stray true cannot change a default or co-op create.
     if (mode === 'solo' && soloUnlimited === true && this.versionSoloTimed(version)) room.soloUnlimited = true;
+    room.prepUnlimited = mode === 'coop' && prepUnlimited === true;
+    room.endless = mode === 'coop' && endless === true;
     room.content = initial;
     if (initial !== this.baseContent(version)) this.holdContent(initial);
     room.ownerKey = key;
@@ -2087,7 +2100,8 @@ export class Lobby {
       };
     });
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
-    const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
+    const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map(),
+      chat: room.mode === 'coop' ? { id: randomUUID(), messages: [], last: new Map(), seq: 0 } : null };
     let seed = 0;
     try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
     const modded = room.modded;
@@ -2121,6 +2135,8 @@ export class Lobby {
         ...(versioned ? { version: room.version } : {}),
         // 「不限时」 (header): only while the room's flag is on, so a default match's opts keep their keys
         ...(room.mode === 'solo' && room.soloUnlimited === true ? { soloUnlimited: true } : {}),
+        ...(room.prepUnlimited === true ? { prepUnlimited: true } : {}),
+        ...(room.endless ? { endless: true } : {}),
         // The list the lobby just checked the picks with (kittedFor). Vanilla rooms omit it: setDiy stays on
         // KITTED_CHARS, and the worker payload / test journal of a normal match do not grow a key.
         ...(modded ? { kitted: this.kittedFor(room) } : {}),
@@ -2227,14 +2243,16 @@ export class Lobby {
       if (frame) frames.set(s.playerId, frame);
     }
     if (frames.size === 0) return null;
-    return { publicFrame: ctx.lastPublic, frames, pending: new Set(frames.keys()) };
+    const chat = ctx.chat && encode({ t: 'm.chat.history', matchId: ctx.chat.id, messages: ctx.chat.messages });
+    const chatMembers = new Set(room.activeHumans().map((s) => s.playerId));
+    return { publicFrame: ctx.lastPublic, frames, pending: new Set(frames.keys()), chat, chatMembers };
   }
 
   /** The replay frames still owed to a player (null when they moved on). @returns {string[] | null} */
   replayFor(room, playerId) {
     const r = room.replay;
     if (!r || !r.pending.has(playerId)) return null;
-    return [r.publicFrame, r.frames.get(playerId)].filter(Boolean);
+    return [r.publicFrame, r.frames.get(playerId), r.chatMembers?.has(playerId) ? r.chat : null].filter(Boolean);
   }
 
   /** The player moved on from the result screen (acted in the room, left): stop replaying it. */
@@ -2286,6 +2304,11 @@ export class Lobby {
     session.resyncAt = this.now();
     if (room.match) {
       this.callMatch(room, room.spectatorOf(session.playerId) ? 'addSpectator' : 'onReconnect', session.playerId);
+      const chat = room.matchCtx?.chat;
+      const seat = room.seatOf(session.playerId);
+      if (chat && seat && !seat.isBot && !seat.left) {
+        sendSession(session, { t: 'm.chat.history', matchId: chat.id, messages: chat.messages });
+      }
       return;
     }
     const frames = this.replayFor(room, session.playerId);
@@ -2345,6 +2368,7 @@ export class Lobby {
     }
     // a spectator only watches (header): nothing else of it ever reaches the match
     if (msg.t !== 'g.watch' && !(room.test && msg.t === 'g.test') && room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (msg.t === 'g.chat') return this.sendChat(room, session, msg);
     let res;
     try {
       res = room.match.handle(session.playerId, msg);
@@ -2367,6 +2391,30 @@ export class Lobby {
       return OK;
     }
     return matchAnswer(res);
+  }
+
+  /** Chat belongs to the lobby's running match context, including matches hosted in child processes. */
+  sendChat(room, session, msg) {
+    const ctx = room.matchCtx;
+    const chat = ctx?.chat;
+    if (!chat || !ctx.live || ctx.ended || chat.id !== msg.matchId) return fail(ERR.WRONG_PHASE);
+    const sender = room.seatOf(session.playerId);
+    if (!sender || sender.isBot || sender.left || !session.connected) return fail(ERR.NOT_IN_ROOM);
+    const text = chatText(msg.text);
+    if (text === null) return fail(ERR.BAD_MSG);
+    const now = this.now();
+    const prev = chat.last.get(sender.playerId);
+    if (prev !== undefined && now - prev < CHAT_COOLDOWN_MS) return fail(ERR.RATE);
+    chat.last.set(sender.playerId, now);
+    const message = { seq: ++chat.seq, playerId: sender.playerId, name: sender.name, at: now, text };
+    chat.messages.push(message);
+    if (chat.messages.length > CHAT_HISTORY_LIMIT) chat.messages.shift();
+    const frame = { t: 'm.chat', matchId: chat.id, message };
+    const encoded = encode(frame);
+    for (const peer of this.memberSessions(room)) {
+      if (room.seatOf(peer.playerId)) sendSession(peer, frame, encoded);
+    }
+    return OK;
   }
 
   /** Call an optional match hook without letting it throw. onLeave falls back to onDisconnect. */

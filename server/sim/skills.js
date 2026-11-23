@@ -194,6 +194,22 @@ export class SkillRuntime {
   }
 
   /**
+   * SkillSpec `allyCast`: the skill swings at ordinary allies as well (暴躁铁皮 S1 "同时攻击敌方与我方"), so a
+   * selectable ally on `keys` is a target of it. Used by the DEFAULT condition and by the TAKE_DAMAGE tick branch.
+   */
+  _allyCastIn(keys) {
+    if (!keys || !this.spec?.allyCast || this.healSkill) return false;
+    const b = this.battle;
+    const u = this.unit;
+    const set = keys instanceof Set ? keys : new Set(keys);
+    for (const a of b.allyUnits) {
+      if (a === u || !a.alive || !a.deployed || a.hidden || a.kind === 'device') continue;
+      if (set.has(a.tileR * COLS + a.tileC) && b.allySelectable(a, u)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Does this skill act on a registered ally target, so that one may start it (`_allyTargetIn`)? Never a heal skill.
    * SkillSpec `allyTargets` (true / false) answers for a kit: true where its selectors take ally targets too
    * (allyTargetsInKeys / allyTargetsInRadius — 蕾缪安 S3, 艾丽妮 S3, 陈 S2, 引星棘刺 S2), false where they never do although
@@ -420,6 +436,10 @@ export class SkillRuntime {
     if (!this.isTimed && !this.spec.attack && this.battle.time < this.nextCastAt - 1e-9) return;
     if (TICK_RULES.has(this.rule)) {
       if (this._tickRuleSatisfied()) this.activate(this.rule);
+    } else if (this.rule === 'TAKE_DAMAGE' && this.spec?.allyCast) {
+      // 暴躁铁皮: the official TANK row is ON_TAKE_DAMAGE + SKILL_RANGE_ENEMY (server/plugins/officialUnitBuilder.js),
+      // and her skill swings at 我方 too, so a target in range — an ally included — opens it without a hit.
+      if (this._defaultCondition()) this.activate('DEFAULT');
     } else if (this.rule !== 'TAKE_DAMAGE' && this.rule !== 'NEVER') {
       // DEFAULT (and unknown rules) for units that cannot attack right now: check the initial range every tick;
       // content trigger ranges are checked every tick for everyone (nothing may be in the unit's own range)
@@ -508,6 +528,9 @@ export class SkillRuntime {
       if (this.healSkill) return b.injuredAlliesInKeys(keys, u, !!u.profile?.heal?.elementHealRatio).length > 0
         || (this.triggerEnemies && b.enemiesInKeys(keys, u, TRIGGER_PROFILE).length > 0);
       if (b.enemiesInKeys(keys, u, u.profile).length > 0 || this._allyTargetIn(keys)) return true;
+      // a skill that swings at allies too (SkillSpec `allyCast`): an ally in range is a target, so the skill opens with
+      // only allies around — 暴躁铁皮 S1, whose official TANK row also lists SKILL_RANGE_ENEMY
+      if (this._allyCastIn(keys)) return true;
     }
     if (!this.healSkill && u.profile?.fortress) {
       // The branch's own-tile melee range also satisfies the basic cast condition for unblockable fragments.

@@ -97,7 +97,7 @@ export function bossPoolHp(gd, bossId, aliveCount) {
   const tune = typeof gd.bossHpMul === 'function' ? gd.bossHpMul(bossId) : 1;
   const share = typeof gd.bossPoolShare === 'function' ? gd.bossPoolShare(aliveCount)
     : bossPoolShareOf(gd.mode && gd.mode.bossHpScale, gd.config && gd.config.bossHpScale, !!gd.isSolo, aliveCount);
-  return Math.max(1, Math.round(base * share * tune));
+  return Math.max(1, Math.round(base * share * tune * (gd.endlessEnemyMultiplier ?? 1)));
 }
 
 /**

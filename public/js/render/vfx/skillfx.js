@@ -247,11 +247,18 @@ export class SkillFx {
         const unitKey = this.w.unitKeyOf(v);
         const rec = this._recordOf(info);
         const r = unitKey ? planFor(this.w.idx, { info, rec, unitKey }) : null;
-        if (r && (r.plan || r.charge || r.enemy.length)) U = this._record(id, r, rec);
+        if (r && (r.plan || r.charge || r.enemy.length)) U = this._record(id, r, rec, v);
       }
       this.units.set(id, U);
     }
-    if (U) U.v = v;
+    if (U) {
+      if (U.fxSkin !== v.info?.skin) {
+        U.fxSkin = v.info?.skin;
+        U.drawsStart = this._drawsStart(U.plan, U.key, v);
+        U.unitOk = U.planOk = undefined;
+      }
+      U.v = v;
+    }
     return U;
   }
 
@@ -261,20 +268,21 @@ export class SkillFx {
     try { return this.w.opts.record(info) || null; } catch { return null; }
   }
 
-  _record(id, r, rec = null) {
-    const idx = this.w.idx, plan = r.plan;
-    const has = (k) => !!k && this.w.ofx.lib.has(k);
-    let draws = false;
-    if (plan) {
-      draws = [...plan.start, ...plan.loop, ...plan.range].some((e) => has(e.key) || (e.slots || []).some(has))
-        || plan.attacks.some((a) => [...a.cast, ...a.range].some((e) => has(e.key)));
-      const mode = plan.modeName ? (idx.units[r.unitKey]?.modes || []).find((m) => m.name === plan.modeName) : null;
-      const a = mode?.attack;
-      if (a && ((a.cast || []).length || (a.hit || []).length || a.projectileKey)) draws = true;
-    }
+  _drawsStart(plan, unitKey, v) {
+    if (!plan) return false;
+    const has = (k) => !!this.w.resolveKey(v, k);
+    if ([...plan.start, ...plan.loop, ...plan.range].some((e) => has(e.key) || (e.slots || []).some(has))
+        || plan.attacks.some((a) => [...a.cast, ...a.range].some((e) => has(e.key)))) return true;
+    const mode = plan.modeName ? (this.w.idx.units[unitKey]?.modes || []).find((m) => m.name === plan.modeName) : null;
+    const a = mode?.attack;
+    return !!(a && ((a.cast || []).length || (a.hit || []).length || a.projectileKey));
+  }
+
+  _record(id, r, rec, v) {
+    const plan = r.plan;
     return {
-      id, v: null, key: r.unitKey, skillId: r.skillId, plan, charge: r.charge, srec: r.srec,
-      buffS: buffDuration(r.srec), tHit: plan ? targetsOf(idx, plan).hit : [], drawsStart: draws,
+      id, v: null, fxSkin: v.info?.skin, key: r.unitKey, skillId: r.skillId, plan, charge: r.charge, srec: r.srec,
+      buffS: buffDuration(r.srec), tHit: plan ? targetsOf(this.w.idx, plan).hit : [], drawsStart: this._drawsStart(plan, r.unitKey, v),
       on: null, startFrame: -1, offAt: -Infinity, atkN: 0, attacked: false, byFlag: false, loopsOn: false,
       loops: [], ready: [], readyOn: false, passiveOn: false, passiveShots: false, passiveDraws: false, passiveDone: false, timed: false,
       energy: 0, slotLoops: [], guardUntil: -Infinity, quiet: false, trigFrame: -1, seen: 0,
@@ -320,7 +328,7 @@ export class SkillFx {
     if (!k) return null;
     const held = e.hold === 'skill' || e.hold === 'ready' || e.hold === 'cast';
     const loop = (e.hold === 'skill' || e.hold === 'ready') && e.loop !== false;
-    return this.w.playOn(k, v, { follow: held, loop, important: held || !!o.important, toward: o.toward, flipFrom: o.flipFrom, skip: o.skip, strike: !!o.strike });
+    return this.w.playOn(k, v, { follow: held, loop, important: held || !!o.important, toward: o.toward, flipFrom: o.flipFrom, skinFrom: o.skinFrom, skip: o.skip, strike: !!o.strike });
   }
 
   /** Keep a started entry by its hold: the skill's loops, the ready loops, or stopped at the cast's end. */
@@ -506,12 +514,12 @@ export class SkillFx {
     let drew = false;
     if (k === 0) {
       for (const e of uniq(a.aim || [])) {
-        const h = this._play(e, t, { toward: beyond(own, t), flipFrom: own });
+        const h = this._play(e, t, { toward: beyond(own, t), flipFrom: own, skinFrom: own });
         if (h) { drew = true; if (e.hold === 'cast' || e.loop) later(this.w.ofx, SKILL_CAST_S, () => h.stop()); }
       }
       for (const e of uniq(U.tHit.filter((x) => x.node == null || x.node === a.node))) if (this._targetLoop(U, e, t)) drew = true;
     }
-    for (const e of uniq(pickGroup(a.hit, k, a.hitOpts, U.atkN))) if (this._play(e, t, { flipFrom: own })) drew = true;
+    for (const e of uniq(pickGroup(a.hit, k, a.hitOpts, U.atkN))) if (this._play(e, t, { flipFrom: own, skinFrom: own })) drew = true;
     return drew;
   }
 
@@ -567,14 +575,14 @@ export class SkillFx {
       for (const m of u?.modes || []) for (const r of [...(m?.attack?.cast || []), ...(m?.attack?.hit || [])]) for (const k of r?.effects || []) ks.add(lc(k));
       for (const k of Array.isArray(u?.refs) ? u.refs : []) ks.add(lc(k));   // every prefab the unit references (its shots')
       ks.add(lc(u?.startEffect));
-      U.unitOk = [...ks].some((k) => !!k && this.w.ofx.lib.has(k));
+      U.unitOk = [...ks].some((k) => !!k && this.w.resolveKey(U.v, k));
     }
     return U.unitOk;
   }
 
   /** The skill's plan has installed effects (FX_COVER: they stand for the kit fx only when they are drawn). */
   _planDrawn(U) {
-    if (U.planOk === undefined) U.planOk = !!U.plan && planKeys(U.plan).some((k) => this.w.ofx.lib.has(k));
+    if (U.planOk === undefined) U.planOk = !!U.plan && planKeys(U.plan).some((k) => this.w.resolveKey(U.v, k));
     return U.planOk;
   }
 
@@ -596,7 +604,7 @@ export class SkillFx {
     const m = u ? this.w.mode(u, v) : null;
     const own = this.birthOf(v)?.key || lc(m?.overrideStartEffect) || lc(u?.startEffect);
     const key = own || lc(this.w.idx.generic?.birth?.char);
-    if (key && this.w.ofx.lib.has(key)) this.born.set(idOf(v), { frame: this.frame, own: !!own && key === own });
+    if (key && this.w.resolveKey(v, key)) this.born.set(idOf(v), { frame: this.frame, own: !!own && key === own });
   }
 
   /**
@@ -613,7 +621,7 @@ export class SkillFx {
     if (!e) return null;
     const key = this._key(e, v);
     const empty = key === 'common_empty';
-    return { key, entry: e, drawn: empty || (!!key && this.w.ofx.lib.has(key)), own: U.plan.kind === 'passive', empty };
+    return { key, entry: e, drawn: empty || (!!key && this.w.resolveKey(v, key)), own: U.plan.kind === 'passive', empty };
   }
 
   /** b.ev 'deploy': a passive's loops and start one-shots; a redeployed 秘术师 starts with no energy. */
@@ -776,7 +784,7 @@ export class SkillFx {
         if ((phase === 'start' && !first) || (phase === 'strike' && first) || (onTarget && !tgt)) continue;
         if ((e.firstOnly && nth > 0) || (e.afterFirst && nth === 0)) continue;
         const skip = phase === 'start' ? info.skip : 0;
-        const h = onTarget ? this._play(e, tgt, { toward: beyond(src, tgt), flipFrom: src, skip }) : this._play(e, src, { toward: tgt, skip, strike: phase !== 'start' });
+        const h = onTarget ? this._play(e, tgt, { toward: beyond(src, tgt), flipFrom: src, skinFrom: src, skip }) : this._play(e, src, { toward: tgt, skip, strike: phase !== 'start' });
         if (h && (e.hold === 'cast' || e.loop)) later(this.w.ofx, phase === 'start' && info.left > 0 ? Math.min(3, info.left) : SKILL_CAST_S, () => h.stop());
       }
     }
@@ -793,7 +801,7 @@ export class SkillFx {
    */
   landed(m, v, k) {
     let drew = false;
-    for (const e of uniq(pickGroup(m.groups, k, m.hitOpts, m.seed))) if (this._play(e, v, { flipFrom: m.src })) drew = true;
+    for (const e of uniq(pickGroup(m.groups, k, m.hitOpts, m.seed))) if (this._play(e, v, { flipFrom: m.src, skinFrom: m.src })) drew = true;
     if (k === 0) for (const e of uniq(m.buffs)) if (this._targetLoop(m.U, e, v)) drew = true;
     return drew;
   }
@@ -806,7 +814,7 @@ export class SkillFx {
     // lasts), IMMEDIATELY (its effect once) — else the record's blackboard duration, else while a lasting skill lasts
     const life = lifeOf(e.life, U.srec?.bb);
     if (life?.once) {
-      const h1 = this._play({ ...e, hold: null }, v, { flipFrom: U.v || undefined });
+      const h1 = this._play({ ...e, hold: null }, v, { flipFrom: U.v || undefined, skinFrom: U.v });
       if (h1 && e.loop) later(this.w.ofx, SKILL_CAST_S, () => h1.stop());
       return h1;
     }
@@ -817,7 +825,7 @@ export class SkillFx {
     const until = dur > 0 ? this.w.ofx.time + dur : Infinity;
     const t = this.tloops.get(slot);
     if (t && t.h.alive) { t.until = Math.max(t.until, until); t.U = U; return t.h; }
-    const h = this.w.playOn(key, v, { follow: true, loop: true, important: true, flipFrom: U.v || undefined });
+    const h = this.w.playOn(key, v, { follow: true, loop: true, important: true, flipFrom: U.v || undefined, skinFrom: U.v });
     if (h) this.tloops.set(slot, { h, until, U, tgt: v, bySkill: !(dur > 0) });
     return h;
   }
@@ -1045,7 +1053,7 @@ export class SkillFx {
       if (list.length) {
         const at = near ? v : (this.w.view(extra.target ?? extra.to) || { id: 'fx:point', x, y, z: 0 });
         let drew = false;
-        for (const e of uniq(list)) { const h = this._play(e, at, { flipFrom: near ? undefined : v }); if (h) { drew = true; this._keep(U, e, h); } }
+        for (const e of uniq(list)) { const h = this._play(e, at, { flipFrom: near ? undefined : v, skinFrom: v }); if (h) { drew = true; this._keep(U, e, h); } }
         if (drew) return true;
       }
     }
@@ -1075,7 +1083,7 @@ export class SkillFx {
     for (const field of ['src', 'id']) {
       const U = extra[field] != null ? this.units.get(extra[field]) : null;
       if (U && U.v && coverOf(U.skillId, kind) && this._lasts(U) && this._planDrawn(U)) return true;
-      if (U && U.v && U.ewin && enemyCoverOf(U.key, U.ewin.plan?.skillId, kind) && this._ewinDraws(U.ewin)) return true;
+      if (U && U.v && U.ewin && enemyCoverOf(U.key, U.ewin.plan?.skillId, kind) && this._ewinDraws(U.ewin, U.v)) return true;
     }
     return false;
   }
@@ -1085,10 +1093,10 @@ export class SkillFx {
    * attack-rooted skill (盐风主教昆图斯's 【大潮】 / 【崩坍】) — its attack's cast / range rows are installed: they play at the
    * next sync (sync: `win.shown`), or with the enemy's attack in the window.
    */
-  _ewinDraws(win) {
+  _ewinDraws(win, v) {
     if (win.draws) return true;
     const a = win.plan?.attacks?.[0];
-    return !!a && [...a.cast, ...a.range].some((e) => this.w.ofx.lib.has(e.key));
+    return !!a && [...a.cast, ...a.range].some((e) => this.w.resolveKey(v, e.key));
   }
 
   /**
@@ -1096,21 +1104,21 @@ export class SkillFx {
    * says; a binding's own `keys` at 'target' once on the unit the fx names.
    */
   _bound(U, bind, x, y, extra) {
-    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.ofx.lib.has(k));
+    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.resolveKey(U.v, k));
     if (!keys.length) return false;
     if (bind.drift) return this._drift(U, bind, keys, x, y, extra);
     if (bind.at === 'target') {
       // once on the unit the fx names (泡泡's attacker, 归溟幽灵鲨 S1's ally), else where it happens; turned by the owner's side
       const tv = this.w.view(extra[bind.target || 'target']) || { id: 'fx:point', x, y, z: 0 };
       let drew = false;
-      for (const k of keys) if (this.w.playOn(k, tv, { flipFrom: U.v || undefined })) drew = true;
+      for (const k of keys) if (this.w.playOn(k, tv, { flipFrom: U.v || undefined, skinFrom: U.v })) drew = true;
       return drew;
     }
     const tv = this.w.view(extra.id);
     const at = bind.at === 'point' || !tv ? this._ground(x, y, tv) : tv;
     if (bind.oneshot) {
       let drew = false;
-      for (const k of keys) if (this.w.playOn(k, at, { important: true })) drew = true;
+      for (const k of keys) if (this.w.playOn(k, at, { important: true, skinFrom: U.v })) drew = true;
       return drew;
     }
     if (bind.hold === 'lock') return this._lockOn(U, keys, at, tv, x, y);
@@ -1120,7 +1128,7 @@ export class SkillFx {
       : Number(bb[bind.hold]) > 0 ? Number(bb[bind.hold]) : bind.holdS || SKILL_CAST_S;
     let drew = false;
     for (const k of keys) {
-      const h = this.w.playOn(k, at, { loop: true, important: true });
+      const h = this.w.playOn(k, at, { loop: true, important: true, skinFrom: U.v });
       if (!h) continue;
       drew = true;
       later(this.w.ofx, holdS, () => h.stop());
@@ -1153,7 +1161,7 @@ export class SkillFx {
     const at = { ...pt, id: `drift:${key}` };
     const hs = [];
     for (const k of keys) {
-      const h = this.w.playOn(k, at, { loop: true, important: true, follow: true });
+      const h = this.w.playOn(k, at, { loop: true, important: true, follow: true, skinFrom: U.v });
       if (h) hs.push(h);
     }
     if (!hs.length) return false;
@@ -1190,12 +1198,12 @@ export class SkillFx {
    * per pulse [ASSUMED] (history §37.202).
    */
   _zoneHits(U, bind, at, holdS) {
-    const keys = bind.hits.map(lc).filter((k) => k && this.w.ofx.lib.has(k));
+    const keys = bind.hits.map(lc).filter((k) => k && this.w.resolveKey(U.v, k));
     if (!keys.length || !(holdS > 0)) return;
     const iv = Number(U.srec?.bb?.interval);
     const every = iv > 0 ? iv : 1;
     const total = Math.max(1, Math.round(holdS / every));
-    const play = () => { for (const k of keys) this.w.playOn(k, at, { important: true }); };
+    const play = () => { for (const k of keys) this.w.playOn(k, at, { important: true, skinFrom: U.v }); };
     play();
     let n = 1;
     const step = () => {
@@ -1215,7 +1223,7 @@ export class SkillFx {
   _lockOn(U, keys, at, tv, x, y) {
     const hs = [];
     for (const k of keys) {
-      const h = this.w.playOn(k, at, { loop: true, important: true, stick: !!tv });
+      const h = this.w.playOn(k, at, { loop: true, important: true, stick: !!tv, skinFrom: U.v });
       if (h) hs.push(h);
     }
     if (!hs.length) return false;
@@ -1318,7 +1326,7 @@ export class SkillFx {
       if (bind.endMode) { this._modeEnd(owner); return false; }   // (its procedural cue stays)
       const drew = bind.modeLoops ? this._modeWin(owner, key, bind)
         : bind.talent ? this._aura(owner, key, bind, x, y, extra)
-        : this._zone(bind, x, y, extra);
+        : this._zone(bind, x, y, extra, owner);
       if (!drew) continue;
       // the kit's own moment stood for an attack-rooted skill of a window: that was its one attack — the enemy's next
       // attacks in the window are its own (0.3.1: the 'cast' of 鼠王's 【沙狱】 holds the window for the debuff's 15 s, and
@@ -1380,8 +1388,8 @@ export class SkillFx {
   }
 
   /** An enemy's zone: its binding's prefabs at the fx's point on the ground, the looping ones for the zone's time. */
-  _zone(bind, x, y, extra) {
-    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.ofx.lib.has(k));
+  _zone(bind, x, y, extra, skinFrom) {
+    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.resolveKey(skinFrom, k));
     if (!keys.length) return false;
     const at = this._ground(x, y);
     const fxS = Number(extra.duration ?? extra.dur ?? extra.hold);
@@ -1389,7 +1397,7 @@ export class SkillFx {
     let drew = false;
     for (const k of keys) {
       // (a one-shot plays its own life: `important` — no cap on what nobody stops)
-      const h = this.w.playOn(k, at, bind.once ? { important: true } : { loop: true, important: true });
+      const h = this.w.playOn(k, at, { loop: !bind.once, important: true, skinFrom });
       if (!h) continue;
       drew = true;
       if (!bind.once) later(this.w.ofx, holdS, () => h.stop());
@@ -1417,7 +1425,7 @@ export class SkillFx {
    * condition it cannot read) and the sim sends no form for the mode [ASSUMED: the loop lasts the sim's spin].
    */
   _modeWin(v, key, bind) {
-    const keys = modeLoopKeys(this.w.idx, key, bind.modeLoops).filter((k) => this.w.ofx.lib.has(k));
+    const keys = modeLoopKeys(this.w.idx, key, bind.modeLoops).filter((k) => this.w.resolveKey(v, k));
     if (!keys.length) return false;
     this._modeEnd(v);   // (a new spin over an old one)
     const hs = keys.map((k) => this.w.playOn(k, v, { follow: true, loop: true, important: true })).filter(Boolean);
@@ -1457,12 +1465,12 @@ export class SkillFx {
       const took = a.took || (a.took = new Set());
       if (id != null && took.has(id)) continue;
       let drew = false;
-      for (const k of a.tg.shots) if (this.w.playOn(k, v, { flipFrom: a.src })) drew = true;
+      for (const k of a.tg.shots) if (this.w.playOn(k, v, { flipFrom: a.src, skinFrom: a.src })) drew = true;
       for (const k of a.tg.loops) {
         const slot = `${id}|${k}`;
         const t = this.aloops.get(slot);
         if (t && t.h.alive) { t.until = now + AURA_HOLD_S; drew = true; continue; }
-        const h = this.w.playOn(k, v, { follow: true, loop: true, important: true });
+        const h = this.w.playOn(k, v, { follow: true, loop: true, important: true, skinFrom: a.src });
         if (h) { this.aloops.set(slot, { h, until: now + AURA_HOLD_S, v }); drew = true; }
       }
       if (!drew) continue;

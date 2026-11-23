@@ -44,6 +44,17 @@
 .ewheel__btn.is-cooling { cursor: default; }
 .ewheel__label { white-space: nowrap; }
 
+/* The combined controls use the HUD's flex layout when there is a battlefield. */
+.gm__corner > .match-communication { display: contents; }
+.match-communication--floating {
+  position: fixed; left: calc(var(--sa-l, 0px) + .24rem); bottom: calc(var(--sa-b, 0px) + .24rem);
+  z-index: calc(var(--z-screen) + 1); display: flex; align-items: flex-end; gap: .1rem;
+}
+.ewheel__unread {
+  position: absolute; top: 0; right: 0; padding: .01rem .05rem; border-radius: .1rem;
+  background: var(--mint-800); color: var(--text-hi); font-size: max(.13rem, 11px); pointer-events: none;
+}
+
 /* ---- panel: one page per theme ----------------------------------------------------------------------------- */
 /* emoji_bkg is 313×231 with a soft shadow margin; its opaque plate spans x 15–297, y 13–212. The cells, the pager
    and the CSS fallback plate all use that geometry. */
@@ -104,6 +115,29 @@
 .ewheel__nav.is-next { right: .7rem; }
 .ewheel__nav:hover:not(:disabled) { color: #fff; }
 .ewheel__nav:disabled { opacity: .18; cursor: default; }
+
+/* The tabs sit above the sprite instead of covering the first row of emotes. */
+.ewheel__tabs { position: absolute; bottom: 100%; left: .15rem; display: flex; gap: .04rem; }
+.ewheel__tabs button, .match-chat__form button {
+  padding: .05rem .12rem; min-height: 24px; border: 1px solid var(--line-2); border-radius: .04rem;
+  background: var(--bg-1); color: var(--text-md); font-size: max(.15rem, 12px);
+}
+.ewheel__tabs button[aria-pressed="true"] { background: var(--mint-900); border-color: var(--mint-700); color: var(--mint-400); }
+.ewheel__panel.has-chat { width: max(3.13rem, 240px); height: max(2.31rem, 120px); }
+.ewheel__panel.has-chat::before { inset: .06rem 0 0 .15rem; width: auto; height: auto; }
+.match-chat {
+  position: absolute; inset: .13rem .1rem .1rem .25rem; display: flex; flex-direction: column; gap: .06rem;
+  color: var(--text-hi); font-size: max(.15rem, 12px); user-select: text;
+}
+.match-chat__messages { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.match-chat__line { padding: .03rem 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.match-chat__meta, .match-chat__form { display: flex; gap: .08rem; }
+.match-chat__meta, .match-chat__note, .match-chat__empty { color: var(--text-lo); }
+.match-chat__form input {
+  flex: 1; min-width: 0; padding: .04rem .09rem; border: 1px solid var(--line-2);
+  background: var(--bg-1); color: inherit; font: inherit;
+}
+.match-chat__note { margin: 0; }
 
 /* ---- bubble beside the sender's avatar (picture only) ------------------------------------------------------ */
 /* emoji_bubble_bkg is 108×97: plate x 22–97, y 8–85, tail tip at x 9, y ≈ 46 (pointing left, toward the avatar). */

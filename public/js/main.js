@@ -52,6 +52,7 @@ import { GAME_FILES } from './ui/gameComponents.js';
 import { TitleScreen, sanitizeName } from './screens/title.js';
 import { LobbyScreen, rememberRoom, parseRoomParam, joinKnown } from './screens/lobby.js';
 import { RoomScreen, TrustedNotice } from './screens/room.js';
+import { CHAT_HISTORY_LIMIT } from '../../shared/chat.js';
 import { GameScreen } from './screens/game.js';
 import { preloadBootArt } from './ui/protocolBoot.js';
 import { audio, installAudio } from './audio.js';
@@ -160,7 +161,7 @@ function backToLobby() {
   clearTimeout(restoreTimer);
   const s = store.get();
   if (s.room || s.match.public) closeAllDialogs();
-  store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [] });
+  store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [], chat: null });
   store.patch('ui', { restoring: false });
 }
 
@@ -219,12 +220,18 @@ function onRoomState(msg) {
   if (myId != null && seats.length && !seats.some((s) => s && s.playerId === myId) && !isSpectating(room, myId)) {
     // We are no longer seated (kicked / left elsewhere) — neither in a player seat nor a spectator seat.
     if (store.get().room) toast(t('你已不在该同盟中'), 'warn');
-    store.set({ room: null, match: emptyMatch() });
+    store.set({ room: null, match: emptyMatch(), chat: null });
     return;
   }
   const prevRoom = store.get().room;
+  if (prevRoom?.code !== room.code && !room.inMatch) store.set({ chat: null });
   // A (new) match starts: forget the previous match's state so stale results never show.
-  if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) store.set({ match: emptyMatch() });
+  if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) {
+    store.set({ match: emptyMatch(), chat: null });
+  }
+  if (room.inMatch && room.chatId && store.get().chat?.id !== room.chatId) {
+    store.set({ chat: { id: room.chatId, messages: [] } });
+  }
   // The room switched its version (DESIGN §35.23): a result still on screen (a settlement, a spectator's view) names the old
   // version's chess ids, and the server dropped the room's replay — it closes, back to the room.
   else if (prevRoom && prevRoom.code === room.code && !room.inMatch && roomVersion(prevRoom) !== roomVersion(room) && store.get().match.public) store.set({ match: emptyMatch() });
@@ -240,6 +247,19 @@ const CLOSE_REASON = {
   host_left: N_('创建者已离开，同盟已解散'), timeout: N_('由于长时间断开连接，你已离开同盟'), empty: N_('同盟已解散'),
   kicked: N_('你已被移出同盟'), ended: N_('模拟已结束'), expired: N_('同盟已过期'), shutdown: N_('服务器维护中，同盟已关闭'),
 };
+
+function receiveChat(msg, messages) {
+  const s = store.get();
+  if (typeof msg.matchId !== 'string' || !s.room?.seats?.some((seat) => seat?.playerId === s.me.playerId)) return;
+  if (s.room.inMatch && s.room.chatId !== msg.matchId) return;
+  if (!s.room.inMatch && !s.match.result) return;
+  const previous = s.chat?.id === msg.matchId ? s.chat.messages : [];
+  const bySeq = new Map(previous.map((line) => [line.seq, line]));
+  for (const line of messages) {
+    if (line && Number.isSafeInteger(line.seq) && typeof line.text === 'string') bySeq.set(line.seq, line);
+  }
+  store.set({ chat: { id: msg.matchId, messages: [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-CHAT_HISTORY_LIMIT) } });
+}
 
 function wireNet() {
   net.on('status', (snap) => {
@@ -301,6 +321,8 @@ function wireNet() {
     const priority = Number.isFinite(msg.priority) ? msg.priority : 0;
     store.set((s) => ({ ticker: [...s.ticker.slice(-(TICKER_KEEP - 1)), { id: ++seq, text, at: Date.now(), type, playerId, round: s.match?.public?.round ?? null, priority }] }));
   });
+  net.on('m.chat', (msg) => receiveChat(msg, [msg.message]));
+  net.on('m.chat.history', (msg) => { if (Array.isArray(msg.messages)) receiveChat(msg, msg.messages); });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
   });

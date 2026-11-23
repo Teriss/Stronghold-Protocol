@@ -120,7 +120,7 @@ export class MatchPhases {
   }
 
   /** Real ms of one strategy-draft turn (BAND_TURN_SECONDS × timerScale). */
-  bandTurnMs() { return this.scaled(BAND_TURN_SECONDS * 1000); }
+  bandTurnMs() { return this.scaled((this.gd.teamScale > 1 ? 30 : BAND_TURN_SECONDS) * 1000); }
 
   startDraftTurn() {
     const d = this.draft;

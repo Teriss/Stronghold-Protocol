@@ -11,6 +11,7 @@
 // (the former enemyHpMul / enemyAtkMul / enemySpeedMul / bossHpMul / flyPlaceholders knobs were removed; a tuning file
 // that still carries them is ignored).
 
+import { DEFAULT_COOP_CAPACITY, MAX_SEATS } from '../../shared/constants.js';
 import { getConfig, getMode } from '../data.js';
 import { isShopItem } from '../sim/simdata.js';
 import { mergeData } from '../../shared/plugins/dataUtils.js';
@@ -79,13 +80,13 @@ export const COMBAT_TIME_SCALE = 2;
  * @param {number} [aliveCount] alive players at the Final Assault / Hidden Core start (co-op)
  * @returns {number}
  */
-export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount) {
+export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount, startCount = 0) {
   const ms = modeScale && typeof modeScale === 'object' ? modeScale : {};
   const cs = cfgScale && typeof cfgScale === 'object' ? cfgScale : {};
   const pick = (k, d) => (Number.isFinite(ms[k]) && ms[k] > 0 ? ms[k] : Number.isFinite(cs[k]) && cs[k] > 0 ? cs[k] : d);
   const flag = (k, d) => (typeof ms[k] === 'boolean' ? ms[k] : typeof cs[k] === 'boolean' ? cs[k] : d);
   if (isSolo) return pick('solo', 1);
-  const full = Math.max(1, Math.floor(pick('aliveFull', 4)));
+  const full = Math.max(1, startCount > DEFAULT_COOP_CAPACITY ? startCount : Math.floor(pick('aliveFull', DEFAULT_COOP_CAPACITY)));
   const n = Number(aliveCount);
   const alive = Number.isFinite(n) && n >= 1 ? Math.min(full, Math.floor(n)) : full;
   if (flag('perPlayer', true)) return pick('coop', 1) * alive;
@@ -100,7 +101,9 @@ export class GameData {
    * @param {Readonly<Record<string, any>>} data server/data.js getData() (may be partial)
    * @param {string} modeId e.g. 'mode_multi_hard'
    */
-  constructor(data, modeId) {
+  constructor(data, modeId, startCount = 0) {
+    this.endlessEnemyMultiplier = 1;
+    this.startCount = Math.max(0, Math.min(MAX_SEATS, Math.floor(Number(startCount) || 0)));
     this.raw = data && typeof data === 'object' ? data : {};
     this.config = getConfig(this.raw) || {};
     this.modeId = modeId;
@@ -173,7 +176,7 @@ export class GameData {
     if (base == null && boss && boss.bloodPoint && Number.isFinite(boss.bloodPoint[diff])) base = boss.bloodPoint[diff];
     if (base == null && boss && boss.bloodPoint) base = Object.values(boss.bloodPoint).find((v) => Number.isFinite(v)) ?? null;
     if (base == null) base = 500000;
-    return Math.max(1, Math.round(base * this.bossPoolShare(aliveCount)));
+    return Math.max(1, Math.round(base * this.bossPoolShare(aliveCount) * this.endlessEnemyMultiplier));
   }
 
   /**
@@ -181,7 +184,7 @@ export class GameData {
    * @param {number} [aliveCount]
    */
   bossPoolShare(aliveCount) {
-    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount);
+    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount, this.startCount);
   }
 
   /** config.titles with the tuning overrides (stat / rule per title id) merged in. */
@@ -323,21 +326,20 @@ export class GameData {
     };
   }
 
-  /**
-   * Copies of a base chess in the shared pool — and, for a DIY slot, of a slotted 自选 piece in its player's own stock
-   * (player/diy.js buildDiyStock).
-   */
+  get teamScale() {
+    return this.isSolo ? 1 : Math.max(1, this.startCount / DEFAULT_COOP_CAPACITY);
+  }
+
+  /** Copies in the shared pool or in a player's private 自选 stock. */
   poolCopies(baseId) {
     const ov = this.economy.poolCopiesOverrides;
     const tier = this.tierOf(baseId);
     const pc = this.economy.poolCopies;
     const v = ov && Number.isInteger(ov[baseId]) && ov[baseId] >= 0 ? ov[baseId] : pc?.[tier];
     const base = Number.isInteger(v) && v >= 0 ? v : (DEFAULTS.poolCopies[tier] ?? 10);
-    // Co-op doubles the single-player counts: the measured shared pool (shared by the whole team, independent of team
-    // size) and each player's private 自选 stock alike — the maintainer's decision of 2026-10-15 (GitHub #650): with
-    // the shared pool doubled and the 自选 stock not, a 自选 operator was diluted in the copy-weighted rolls.
+    // Scale shared and private 自选 stock together so a larger shared pool does not dilute 自选 operators in draws.
     const multiplier = this.isSolo ? 1 : posIntOr(this.economy.coopPoolMultiplier, 1);
-    return base * multiplier;
+    return Math.ceil(base * multiplier * this.teamScale);
   }
 
   /** Normal equipment copies in the shared pool; effect-only items have no shop stock limit. */
@@ -345,7 +347,7 @@ export class GameData {
     const base = this.baseIdOf(id), rec = this.item(base);
     if (!rec || !isShopItem(rec)) return null;
     const count = this.economy.itemPoolCopiesOverrides?.[base] ?? this.economy.itemPoolCopies?.[rec.tier];
-    return Number.isInteger(count) && count >= 0 ? count : null;
+    return Number.isInteger(count) && count >= 0 ? Math.ceil(count * this.teamScale) : null;
   }
 
   /** Whether a fixed trait gift may be produced beyond stock (including the advanced version of that item). */
@@ -464,9 +466,11 @@ export class GameData {
     };
   }
 
-  /** Enemy multipliers of round r = the official table (baseEnemyScale; no custom multiplier). */
+  /** Enemy multipliers after applying the current endless cycle to the standard numbers. */
   enemyScale(r) {
-    return this.baseEnemyScale(r);
+    const scale = this.baseEnemyScale(r);
+    const mul = this.endlessEnemyMultiplier;
+    return mul === 1 ? scale : { ...scale, hpMul: scale.hpMul * mul, atkMul: scale.atkMul * mul };
   }
 
   timer(key) {
@@ -521,9 +525,10 @@ export class GameData {
   }
   get hiddenCore() {
     const h = this.config.hiddenCore && typeof this.config.hiddenCore === 'object' ? this.config.hiddenCore : {};
+    const multi = numOr(h.multi, DEFAULTS.hiddenCore.multi);
     return {
       single: numOr(h.single, DEFAULTS.hiddenCore.single),
-      multi: numOr(h.multi, DEFAULTS.hiddenCore.multi),
+      multi: this.teamScale > 1 ? Math.ceil(multi * this.teamScale) : multi,
       minTeamLpExclusive: numOr(h.minTeamLpExclusive, DEFAULTS.hiddenCore.minTeamLpExclusive),
       difficulties: Array.isArray(h.difficulties) ? h.difficulties : DEFAULTS.hiddenCore.difficulties,
     };

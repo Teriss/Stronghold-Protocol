@@ -137,14 +137,20 @@ function itemCard(gd, id) {
  * Build the draft cards for an SP round.
  * @returns {{ family: string, name: string, desc: string, eventId: string|null, cards: object[] } | null}
  */
-export function generateDraft(gd, rng, round, { stageId = null, bondAvailable = null, itemAvailable = null } = {}) {
+export function draftFundsCard(idx, family) {
+  return { idx, family, id: 'extended-draft-funds', kind: 'funds', name: '资金补给', desc: '获得 2 资金' };
+}
+
+export function generateDraft(gd, rng, round, { stageId = null, bondAvailable = null, itemAvailable = null, minimum = 0 } = {}) {
   const sch = scheduleFor(gd, round);
   const fams = Array.isArray(sch.families) && sch.families.length ? sch.families.map((f) => [f.family, f.weight]) : [['supply', 1]];
   let family = weightedPick(rng, fams) || 'supply';
-  const n = Number.isInteger(sch.cards) && sch.cards > 0 ? Math.min(sch.cards, 6) : formatCount(gd);
+  const baseCount = Number.isInteger(sch.cards) && sch.cards > 0 ? Math.min(sch.cards, 6) : formatCount(gd);
   const opts = { stageId, bondAvailable, round, itemAvailable };
-  let cards = buildCards(gd, rng, family, n, sch, opts);
-  if (!cards.length && family !== 'supply') { family = 'supply'; cards = buildCards(gd, rng, family, n, sch, opts); }
+  const expandedCount = Math.max(baseCount, minimum);
+  let cards = buildCards(gd, rng, family, family === 'bounty' ? baseCount : expandedCount, sch, opts);
+  if (!cards.length && family !== 'supply') { family = 'supply'; cards = buildCards(gd, rng, family, expandedCount, sch, opts); }
+  while (family !== 'bounty' && minimum > 0 && cards.length < expandedCount) cards.push(draftFundsCard(cards.length, family));
   if (!cards.length) return null;
   cards.forEach((c, i) => { c.idx = i; c.family = family; });
   const famInfo = gd.choices.families && gd.choices.families[family];
@@ -444,6 +450,7 @@ function applyDefault(m, ps, card) {
     ps.acquireItem(card.id, { source: 'choice' });
     return;
   }
+  if (card.kind === 'funds') { ps.addFunds(2, { reason: 'choice' }); return; }
   if (card.kind !== 'tactic') return;
   const eff = gd.effect(card.id);
   const buffs = eff && Array.isArray(eff.buffs) ? eff.buffs : [];

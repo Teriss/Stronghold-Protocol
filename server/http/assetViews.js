@@ -12,17 +12,17 @@
 //     `spine/…` group of data/local-assets.json (the files a `spineLocal` record names).
 //   * A URL the index has no hash for (not on disk, not hashed yet) stays as it is.
 //   * The committed data/assets.json is never written: a view is built in memory from the file and the index, again
-//     when either changes (the file's size / mtime, the index's generation), and once after every index build, so the
+//     when either changes (the file's stat identity, the index's generation), and once after every index build, so the
 //     index knows the model lists before any page asks.
-//   * Optional local operator chars merge into the served assets manifest before cosmetic layers (§34.28).
-//     Without hashing they use plain URLs. Without local chars or a ready index, files go out as they are.
+//   * Optional extracted characters and skins merge into the served assets manifest before cosmetic layers (§34.28).
+//     Without hashing they use plain URLs. Without local additions or a ready index, files go out as they are.
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { hashedPath } from '../../shared/assetPaths.js';
 import { hash16 } from './assetIndex.js';
 import { noopLog } from './config.js';
-import { mergeLocalChars } from '../plugins/artReferences.js';
+import { LOCAL_SKINS_MANIFEST, LOCAL_SKINS_URL, mergeLocalChars, mergeLocalSkins } from '../plugins/artReferences.js';
 export { mergeLocalChars } from '../plugins/artReferences.js';
 
 /** The manifests that have a view, by their name under data/. */
@@ -58,7 +58,7 @@ function spineUrls(o) {
  * The served copy of a manifest and its model lists. `index`: hashOf(rel) / modelHash(rels) of assetIndex.js.
  * @param {any} doc the parsed manifest (not changed)
  * @param {'assets.json'|'local-assets.json'|'local-fx.json'} name
- * @param {{ hashOf: (rel: string) => string | null, modelHash: (rels: string[]) => string | null }} index
+ * @param {{ hashOf: (rel: string) => string | null, modelHash: (rels: string[]) => string | null, noteMiss?: () => void }} index
  * @returns {{ doc: any, models: string[][], hashed: number, plain: number }}
  */
 export function rewriteManifest(doc, name, index) {
@@ -69,7 +69,10 @@ export function rewriteManifest(doc, name, index) {
     const rel = relOf(url);
     const h = rel ? index.hashOf(rel) : null;
     if (h) { hashed++; return hashedPath(url, h); }
-    if (rel) plain++;
+    if (rel) {
+      plain++;
+      if (url.startsWith(LOCAL_SKINS_URL)) index.noteMiss?.();
+    }
     return url;
   };
   /** All URLs of one model with the model's hash (or all left plain when a member is unknown). */
@@ -78,7 +81,11 @@ export function rewriteManifest(doc, name, index) {
     if (rels.some((r) => !r)) return null;
     models.push(rels);
     const h = index.modelHash(rels);
-    if (!h) { plain += urls.length; return null; }
+    if (!h) {
+      plain += urls.length;
+      if (urls[0].startsWith(LOCAL_SKINS_URL)) index.noteMiss?.();
+      return null;
+    }
     hashed += urls.length;
     return h;
   };
@@ -93,6 +100,8 @@ export function rewriteManifest(doc, name, index) {
         if (h && k === 'skel') out[k] = hashedPath(x, h);
         else if (h && k === 'atlas' && typeof x === 'string') out[k] = hashedPath(x, h);
         else if (h && k === 'textures' && Array.isArray(x)) out[k] = x.map((u) => (typeof u === 'string' ? hashedPath(u, h) : u));
+        // New local files may not all be in the index yet. Keep this model in one plain folder until they are.
+        else if (!h && v.skel.startsWith(LOCAL_SKINS_URL) && ['skel', 'atlas', 'textures'].includes(k)) out[k] = x;
         else out[k] = walk(x);
       }
       return out;
@@ -133,24 +142,36 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
   /** @type {Map<string, Promise<any>>} */
   const pending = new Map();
   const warned = new Set();
+  let lastSkinStamp = '-';
 
   const pushModels = () => index?.setModels([...cache.values()].flatMap((c) => c.models));
   const plainIndex = { hashOf: () => null, modelHash: () => null };
 
-  /** Build a hashed view or a plain local-operator merge; otherwise leave ordinary file serving alone. */
+  const fileStat = (file) => fsp.stat(file).then((st) => st.isFile() ? st : null, () => null);
+  const stamp = (st) => st ? `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}` : '-';
+  const readOptional = async (file) => {
+    try { return JSON.parse(await fsp.readFile(file, 'utf8')); } catch { return undefined; }
+  };
+
+  /** Build a hashed view or a plain local-art merge; otherwise leave ordinary file serving alone. */
   async function build(name) {
-    // Local operator art also works with SP_ASSET_INDEX=0 and during the initial hash scan.
-    const localFile = path.join(dir, 'local-assets.json');
-    const localStat = name === 'assets.json' ? await fsp.stat(localFile).catch(() => null) : null;
-    const indexed = index?.ready && index.size > 0;
-    if (!indexed && !localStat) return null;
+    // Local art also works with SP_ASSET_INDEX=0 and during the initial hash scan.
     const file = path.join(dir, name);
-    const st = await fsp.stat(file).catch(() => null);
-    if (!st || !st.isFile()) {
+    const localFile = path.join(dir, 'local-assets.json'), skinsFile = path.join(dir, LOCAL_SKINS_MANIFEST);
+    const [st, localStat, skinsStat] = await Promise.all([fileStat(file),
+      name === 'assets.json' ? fileStat(localFile) : null, name === 'assets.json' ? fileStat(skinsFile) : null]);
+    const indexed = index?.ready && index.size > 0;
+    const skinStamp = stamp(skinsStat);
+    if (name === 'assets.json' && lastSkinStamp !== skinStamp) {
+      lastSkinStamp = skinStamp;
+      // The sidecar may have been installed with updated bytes even for already indexed paths.
+      index?.noteMiss?.();
+    }
+    if (!st || (!indexed && !localStat && !skinsStat)) {
       if (cache.delete(name)) pushModels();
       return null;
     }
-    const key = `${index?.generation || 0}|${st.size}|${st.mtimeMs}|${localStat?.size || 0}|${localStat?.mtimeMs || 0}`;
+    const key = `${indexed ? index.generation : '-'}|${stamp(st)}|${stamp(localStat)}|${skinStamp}`;
     const hit = cache.get(name);
     if (hit && hit.key === key) return hit.view;
     let doc;
@@ -162,15 +183,15 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
       pushModels();
       return null;
     }
-    if (localStat) {
-      let local;
-      try { local = JSON.parse(await fsp.readFile(localFile, 'utf8')); } catch { /* optional local art */ }
-      const merged = mergeLocalChars(doc, local);
-      if (!indexed && merged === doc) return null;
-      doc = merged;
+    const merged = mergeLocalSkins(mergeLocalChars(doc, localStat ? await readOptional(localFile) : undefined),
+      skinsStat ? await readOptional(skinsFile) : undefined);
+    if (!indexed && merged === doc) {
+      cache.set(name, { key, view: null, models: [] });
+      pushModels();
+      return null;
     }
     // one synchronous step: the view and the model lists the index checks a model's URLs against
-    const { doc: out, models, hashed, plain } = rewriteManifest(doc, name, indexed ? index : plainIndex);
+    const { doc: out, models, hashed, plain } = rewriteManifest(merged, name, indexed ? index : plainIndex);
     const body = Buffer.from(JSON.stringify(out));
     const view = { body, hash: hash16(body), hashed, plain };
     cache.set(name, { key, view, models });

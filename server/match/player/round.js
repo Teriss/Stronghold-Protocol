@@ -57,6 +57,14 @@ export class PlayerRound {
     this.alive = false;
     this.ready = false;
     this.eliminatedRound = round;
+    if (this.m.endless && !this.left) {
+      this.dirty();
+      return;
+    }
+    this.releaseEliminatedAssets();
+  }
+
+  releaseEliminatedAssets() {
     const all = [];
     for (const p of this.board.values()) all.push(p);
     for (const p of this.hand) if (p) all.push(p);

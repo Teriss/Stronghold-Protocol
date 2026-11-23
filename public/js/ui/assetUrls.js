@@ -78,6 +78,83 @@ export function chessPortraitUrl(m, chess, { skin = null } = {}) {
   return (chess?.isGolden ? str(byChar.portraitE2) : null) || str(byChar.portrait);
 }
 
+/** Where this installation's waiting-room card pictures live (server/plugins/artReferences.js ROOM_ART_URL). A served
+ *  manifest inserts the content hash (`/assets/~<hash>/…`, shared/assetPaths.js), so that segment is optional here. */
+const ROOM_CARD_URL = /^\/assets\/(?:~[0-9a-f]{16}\/)?local\/skins\/room-cards\/(char_[0-9]+_[a-z0-9]+)\/([a-z0-9][a-z0-9_-]{0,63})\.webp$/;
+
+/** Old picture URL → the high-resolution cards cropped from it, built once per manifest object (see roomCardPortraitUrls). */
+const roomCardIndex = new WeakMap();
+
+/**
+ * The room-card pictures of a manifest, by the picture they reproduce: `roomPortraitOf` must be the record's own key,
+ * so a record a plugin copied whole from another operator (`{ "ref": "char_…" }`) contributes no room card.
+ * @param {any} m
+ * @returns {Map<string, {url: string, skinId: string | null}[]>}
+ */
+function roomCardsOf(m) {
+  const index = new Map();
+  if (!m || typeof m !== 'object') return index;
+  const cached = roomCardIndex.get(m);
+  if (cached) return cached;
+  const add = (entryId, owner, from, url, skinId) => {
+    if (owner !== entryId || typeof from !== 'string' || typeof url !== 'string') return;
+    const match = ROOM_CARD_URL.exec(url);
+    if (!match || match[1] !== entryId) return;
+    let list = index.get(from);
+    if (!list) index.set(from, (list = []));
+    if (!list.some((hit) => hit.url === url && hit.skinId === skinId)) list.push({ url, skinId });
+  };
+  const chars = obj(obj(m)?.chars);
+  for (const [entryId, entry] of Object.entries(chars || {})) {
+    if (!obj(entry)) continue;
+    const owner = str(entry.roomPortraitOf);
+    add(entryId, owner, str(entry.roomPortraitFrom), str(entry.roomPortrait), null);
+    add(entryId, owner, str(entry.roomPortraitE2From), str(entry.roomPortraitE2), null);
+    for (const [skinId, skin] of Object.entries(obj(entry.skins) || {})) {
+      if (!obj(skin)) continue;
+      add(entryId, owner, str(skin.roomPortraitFrom), str(skin.roomPortrait), skinId);
+      add(entryId, owner, str(skin.roomPortraitE2From), str(skin.roomPortraitE2), skinId);
+    }
+  }
+  roomCardIndex.set(m, index);
+  return index;
+}
+
+/**
+ * The pictures a room seat card may draw, best first (waiting room only, screens/room.js): the high-resolution re-crop
+ * of the outfit's picture, the outfit's picture, then the operator's default picture and its re-crop — a picture that
+ * failed to load is skipped by the card, the last fallback is its avatar frame. A high-resolution URL is used only while
+ * the picture it was cropped from (`roomPortraitFrom`) is still the one this manifest draws for this operator and stage:
+ * a plugin that gives the card another picture, a record copied over from another operator, or another elite stage's
+ * art all leave the card on the picture this installation actually has (`chessPortraitUrl`'s rules).
+ * @param {any} m manifest
+ * @param {any} chess chess.json record
+ * @param {{ skin?: string | null }} [opts] the outfit the seat card wears (ui/skins.js ownerSkin)
+ * @returns {string[]}
+ */
+export function roomCardPortraitUrls(m, chess, { skin = null } = {}) {
+  const index = roomCardsOf(m);
+  const picture = (old, skinId) => {
+    const hit = index.get(str(old))?.find((h) => h.skinId === (skinId || null));
+    return hit ? hit.url : null;
+  };
+  const outfit = str(skin) ? str(chessPortraitUrl(m, chess, { skin })) : null;
+  const fallback = str(chessPortraitUrl(m, chess));
+  const out = [];
+  const add = (url) => { const v = str(url); if (v && !out.includes(v)) out.push(v); };
+  // A skin this manifest does not know draws the default picture: one list, with its own high-resolution copy first.
+  if (outfit && outfit !== fallback) {
+    add(picture(outfit, skin));
+    add(outfit);
+    add(picture(fallback, null));
+    add(fallback);
+  } else {
+    add(picture(fallback, null));
+    add(fallback);
+  }
+  return out;
+}
+
 /** Skill icon of a chess record (manifest `skills[iconId]`, else the empty skill sprite). */
 export function skillIconUrl(m, chess) {
   const skills = obj(obj(m)?.skills);

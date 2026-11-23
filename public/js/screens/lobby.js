@@ -37,7 +37,7 @@
 import { TestMark } from '../ui/testConsole.js';
 import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, COOP_ROOM_CAPACITIES, DEFAULT_COOP_CAPACITY, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
 import { html, confirmDialog, Button, Icon, MicroLabel, Modal, PingPill, Spinner, DifficultyIcon, TextField } from '../ui/components.js';
 import { Sprite, Img } from '../ui/gameComponents.js';
 import { uiUrl, medalIconUrl } from '../ui/assetUrls.js';
@@ -691,6 +691,9 @@ export function ProtocolSelect({ roomMode, difficulty, onDifficulty, onClose, on
  */
 export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, onCode, codeOk, online, busy, onJoin, onSpectate, recent, marks, focusKey,
   testMode = false, asTest = false, onTest = () => {}, short = false }) {
+  const [capacity, setCapacity] = useState(DEFAULT_COOP_CAPACITY);
+  const [prepUnlimited, setPrepUnlimited] = useState(false);
+  const [endless, setEndless] = useState(false);
   const diffName = DIFFICULTY_NAMES[difficulty] ? t(DIFFICULTY_NAMES[difficulty]) : '';
   return html`<${Modal} open=${true} onClose=${onClose} class="ally" veilClass="proto-veil">
     <div class="ally__body">
@@ -708,8 +711,27 @@ export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, 
           <button type="button" class="ally-guide" onClick=${() => openGuide(0)}><span class="ally-guide__icon"><${Icon} name="book" /></span>${t('玩法说明')}</button>
         </section>
         <section class="ally-side">
+          <div class="ally-capacity" role="group" aria-label=${t('同盟人数上限')}>
+            <span>${t('同盟人数上限')}</span>
+            ${COOP_ROOM_CAPACITIES.map((value) => html`<button key=${value} type="button" aria-pressed=${capacity === value}
+              disabled=${busy === 'create'} onClick=${() => setCapacity(value)}>${value}</button>`)}
+          </div>
+          <div class="ally-rules">
+          <button type="button" class="ally-prep" role="switch" aria-checked=${String(prepUnlimited)}
+              data-testid="alliance-prep-unlimited" title=${t('每轮休整须全员就绪后才开始作战')}
+              disabled=${busy === 'create'} onClick=${() => setPrepUnlimited(!prepUnlimited)}>
+            <span class="ally-prep__check" aria-hidden="true">${prepUnlimited ? html`<${Icon} name="check" />` : null}</span>
+            ${t('休整不限时')}
+          </button>
+          <button type="button" class="ally-prep" role="switch" aria-checked=${String(endless)}
+              data-testid="alliance-endless" title=${t('通关后投票续轮，保留养成并更换地图')}
+              disabled=${busy === 'create'} onClick=${() => setEndless(!endless)}>
+            <span class="ally-prep__check" aria-hidden="true">${endless ? html`<${Icon} name="check" />` : null}</span>
+            ${t('无尽模式')}
+          </button>
+          </div>
           <button type="button" class="ally-card ally-card--create ally-create" data-testid="alliance-create" data-difficulty=${difficulty}
-              disabled=${!online || busy === 'create'} aria-busy=${busy === 'create' ? 'true' : 'false'} onClick=${() => onCreate()}>
+              disabled=${!online || busy === 'create'} aria-busy=${busy === 'create' ? 'true' : 'false'} onClick=${() => onCreate(capacity, { prepUnlimited, endless })}>
             <span class="ally-card__art"><${CreateArt} /></span>
             <span class="ally-card__bar"><span class="ally-card__icon">${busy === 'create' ? html`<${Spinner} size="sm" />` : html`<${Icon} name="plus" />`}</span><span class="ally-card__name">${t('创建同盟')}</span>
               <small>${online ? t('难度：{name}（可在同盟内更改）', { name: diffName }) : t('正在连接服务器…')}</small></span>
@@ -811,8 +833,11 @@ export function LobbyScreen() {
   };
   // 独立模拟: at the difficulty picked on 选择模拟协议; 创建同盟: at the remembered one, changed in the room by the host
   // (`version`: the lobby's, only when welcome.versions is present — protocol §4; omitted when the server offers 第二期下半 alone)
-  const create = (mode) => run('create', () => net.request('room.create', {
+  const create = (mode, capacity = DEFAULT_COOP_CAPACITY, { prepUnlimited = false, endless = false } = {}) => run('create', () => net.request('room.create', {
     mode, difficulty: mode === 'solo' ? shownSolo : shownCoop, ...(testMode && asTest ? { test: true } : {}), ...(versions ? { version } : {}),
+    ...(mode === 'coop' ? { capacity } : {}),
+    ...(mode === 'coop' && prepUnlimited ? { prepUnlimited: true } : {}),
+    ...(mode === 'coop' && endless ? { endless: true } : {}),
     ...(mode === 'solo' && soloFree && soloTimed === true ? { soloUnlimited: true } : {}),
     ...(mode === 'solo' && shownMode ? { modeId: shownMode } : {}),
   }));
@@ -892,7 +917,7 @@ export function LobbyScreen() {
       </section>
     </main>
 
-    ${allyOpen ? html`<${AllianceSelect} onClose=${() => setAllyOpen(false)} onCreate=${() => create('coop')} difficulty=${shownCoop}
+    ${allyOpen ? html`<${AllianceSelect} onClose=${() => setAllyOpen(false)} onCreate=${(capacity, rules) => create('coop', capacity, rules)} difficulty=${shownCoop}
       code=${code} onCode=${(v) => setCode(normalizeCode(v))} codeOk=${codeOk} online=${online} busy=${busy}
       onJoin=${join} onSpectate=${spectate} recent=${recent} marks=${marks} focusKey=${!coarse}
       testMode=${testMode} asTest=${asTest} onTest=${setAsTest} short=${shortScreen} />` : null}

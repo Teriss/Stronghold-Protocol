@@ -104,6 +104,9 @@ import { EnemyDrawer } from '../ui/enemyDrawer.js';
 import { MatchBondDialog, matchInfoModel, regulationCoreAbsent } from '../ui/matchInfo.js';
 import { Ticker } from '../ui/ticker.js';
 import { EmoteWheel } from '../ui/emotes.js';
+import { MatchCommunication } from '../ui/matchCommunication.js';
+import { TeamOverview } from '../ui/teamOverview.js';
+import { EndlessVote } from '../ui/endlessVote.js';
 import { BandCommand, CommandDraft } from '../ui/bandCommand.js';
 import { EffectsList } from '../ui/effectsList.js';
 import { CombatHud } from '../ui/combatHud.js';
@@ -192,6 +195,8 @@ export const BOOT_MIN_MS = 2300;
 export function GameScreen() {
   const pub = useStore((s) => s.match.public);
   const hasResult = useStore((s) => !!s.match.result);
+  const chatId = useStore((s) => s.room?.mode === 'coop'
+    && s.room.seats?.some((seat) => seat?.playerId === s.me.playerId) ? s.chat?.id : null);
   const ended = useStore((s) => !!s.room && !s.room.inMatch && !!s.match.public);
   const away = useStore((s) => s.away, Object.is, awayStore);
   const autoplay = useStore((s) => !!(Array.isArray(s.match.public?.players) && s.match.public.players.find((p) => p && p.playerId === s.me.playerId)?.autoplay));
@@ -231,13 +236,22 @@ export function GameScreen() {
     </div>`;
   }
   const mode = phaseMode(pub.phase);
+  const matchEnded = ended || hasResult || mode === 'result';
+  const showResult = hasResult || mode === 'result';
+  const showHud = !showResult && !['briefing', 'diy', 'draft'].includes(mode) && !held;
+  const communication = chatId ? html`<div class=${cx('match-communication', !showHud && 'match-communication--floating')} key=${chatId}>
+    <${MatchCommunication} ended=${matchEnded} />
+    ${matchEnded ? null : html`<${TeamOverview} pub=${pub} myId=${store.get().me.playerId} gd=${gd} />`}
+  </div>` : null;
   let body;
-  if (hasResult || mode === 'result') body = html`<${ResultScreen} />`;
+  if (showHud) body = html`<${MatchScreen} communication=${communication} />`;
+  else if (showResult) body = html`<${ResultScreen} />`;
   else if (mode === 'briefing') body = html`<${BriefingScreen} />`;
   else if (mode === 'diy') body = html`<${DiyCheckScreen} />`;
-  else if (mode === 'draft' || held) body = html`<${BandDraftScreen} held=${held} />`;
-  else body = html`<${MatchScreen} />`;
+  else body = html`<${BandDraftScreen} held=${held} />`;
   return html`${body}
+    ${pub.phase === PHASE.ENDLESS_VOTE && pub.endless?.vote && !ended && !hasResult ? html`<${EndlessVote} key=${pub.endless.cycle} pub=${pub} />` : null}
+    ${showHud ? null : communication}
     ${voteRoom && (hasResult || mode === 'result') ? html`<${VersionVote} room=${voteRoom} class="vervote--float" />` : null}
     ${(away || autoplay) && !hasResult && mode !== 'result' && !ended ? html`<${AwayOverlay} />` : null}
     ${ended && !hasResult && mode !== 'result' ? html`<${MatchEnded} />` : null}
@@ -252,7 +266,7 @@ const inBattleCard = (d) => d?.kind === 'unit' || (d?.kind === 'device' && d.dev
 // Theme plate art of a phase banner (docs/THEMES.md). 联防 is PhasePopup (`data-banner="coop"`), not this map.
 const THEME_PLATE = Object.freeze({ [PHASE.BATTLE_CHECK]: 'gameStart' });
 
-function MatchScreen() {
+function MatchScreen({ communication = null } = {}) {
   useDocClass('sp-in-match');
   useEffect(() => { preloadPopupArt(); }, []);
   const pub = useStore((s) => s.match.public);
@@ -1732,6 +1746,7 @@ function MatchScreen() {
     const clearPointer = () => { pointer = null; };
     const leaveWindow = (e) => { if (!e.relatedTarget) clearPointer(); };
     const onKey = async (e) => {
+      if (e.target instanceof Element && e.target.closest('.match-communication, .team-overview')) return;
       const act = shortcutFor(e, settingsStore.get().keys); // the player's key map (Settings > Shortcuts)
       const L = live.current;
       if (document.querySelector('.offerov[role="dialog"]')) return; // Only the visible dialog owns keyboard input.
@@ -1829,8 +1844,9 @@ function MatchScreen() {
   }, []);
 
   // ---- render ---------------------------------------------------------------------------------------------------
-  const readyCount = players.filter((p) => p.ready || p.status === 'ready').length;
-  const aliveCount = players.filter((p) => p.alive !== false && p.status !== 'left').length;
+  const activePlayers = players.filter((p) => p.alive !== false && p.status !== 'left');
+  const readyCount = activePlayers.filter((p) => p.ready || p.status === 'ready').length;
+  const aliveCount = activePlayers.length;
   // the own battle is over: the server says so (status done) or — client-side combat — the local simulation just ended
   const localDone = cc && !!battleState && battleState.own && !battleState.watch && battleState.done && battleState.fieldId === ownFieldId(myId);
   // (client-side combat: only in 各自行动 — 联防 observers just watch the 联防 field, research 09 §3.1)
@@ -1956,7 +1972,7 @@ function MatchScreen() {
     bonds: data.list('bonds'), chess: (id) => data.lookup('chess', id), mode: getMode(pub?.modeId),
   }) : null;
 
-  return html`<div class=${cx('screen', 'gm', `gm--${mode}`, regView && 'gm--reg', isBossPhase(phase) && 'is-boss', drag && 'is-dragging', barCollapsed && 'is-collapsed', deployPartial && 'is-deploy-partial', (sp || hasPersonalChoice || offerBlocksPrep(pub?.offers)) && 'has-sp', sp && 'has-spdraft', pen && 'is-pen', readyWhy && 'has-readywhy')}
+  return html`<div class=${cx('screen', 'gm', `gm--${mode}`, communication && 'gm--room-chat', players.length > 4 && 'gm--large-team', regView && 'gm--reg', isBossPhase(phase) && 'is-boss', drag && 'is-dragging', barCollapsed && 'is-collapsed', deployPartial && 'is-deploy-partial', (sp || hasPersonalChoice || offerBlocksPrep(pub?.offers)) && 'has-sp', sp && 'has-spdraft', pen && 'is-pen', readyWhy && 'has-readywhy')}
       data-camera=${pen ? 'pen' : camKind}>
     <div class="gm__field" ref=${hostRef} onContextMenu=${(e) => e.preventDefault()}></div>
     ${viewKind === 'loading' ? html`<div class="gm__loading"><${Spinner} label="LOADING FIELD" /></div>` : null}
@@ -2035,7 +2051,7 @@ function MatchScreen() {
       <div class="gm__corner">
         <${AiTakeoverPanel} />
         ${showMetrics && metricsOpen ? html`<${CombatMetricsPanel} myId=${myId} onClose=${() => setMetricsOpen(false)} />` : null}
-        ${spectator ? null : html`<${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online'} />`}
+        ${spectator ? null : communication || html`<${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online'} />`}
         ${showMetrics ? html`<button type="button" class="gm__gear gm__metrics" aria-label=${t('作战统计')} title=${t('作战统计')} aria-expanded=${metricsOpen}
           aria-controls="combat-metrics-panel" onKeyDown=${(e) => { if (e.key === ' ') e.stopPropagation(); }} onClick=${() => {
             setMetricsOpen(!metricsOpen);

@@ -69,6 +69,8 @@ Usage:
   .venv/bin/python tools/local-extract/extract.py --only scene [--scenes <dir of in-season bundles>]
   .venv/bin/python tools/local-extract/extract.py --only fx [--fx-set sample|used] [--fx-keys k1,k2] [--fx-jobs N]
                                                         [--fx-texture-format webp|png]
+  .venv/bin/python tools/local-extract/extract.py --only fx --fx-set used --fx-skins <new staging dir>
+                                                        [--fx-skin-table <skin_table.json>]
   .venv/bin/python tools/local-extract/extract.py --only plugin-art [--plugin-root <installation>]
   .venv/bin/python tools/local-extract/extract.py --only theme [--themes <backup or AB root>] [--only theme/<id>]
                                                         --out <scratch> --manifest <scratch>/local-assets.json
@@ -1150,6 +1152,11 @@ def main():
                     help='extract only units/prefabs missing from the current fx index; preserve the existing set')
     ap.add_argument('--fx-texture-format', choices=('webp', 'png'), default='webp',
                     help='with --only fx: WebP quality 90 textures (default) or lossless PNG')
+    ap.add_argument('--fx-skins', metavar='STAGING', type=Path,
+                    help='with --only fx: include battle skin hooks; write all FX and its manifest only to a new '
+                         'or empty staging directory outside the project')
+    ap.add_argument('--fx-skin-table', metavar='JSON', type=Path,
+                    help='optional official skin_table.json for exact skin ID spelling (with --fx-skins)')
     ap.add_argument('--webp', action='store_true',
                     help='only write the WebP copies of the board textures and the guide pages from the PNGs already '
                          'under --out and list them in the manifest (needs Pillow, not the client)')
@@ -1193,6 +1200,21 @@ def main():
                                           'format': season_entry.FORMAT}},
                          ensure_ascii=False))
         return 0
+    if args.fx_skin_table and not args.fx_skins:
+        ap.error('--fx-skin-table requires --fx-skins')
+    if args.fx_skins:
+        if not args.only or any(p.rstrip('/') != fx.FX_SUB for p in args.only) or args.webp:
+            ap.error('--fx-skins requires --only fx')
+        if args.fx_keys or args.fx_add_only:
+            ap.error('--fx-skins requires a complete sample or used FX run, not --fx-keys or --fx-add-only')
+        if Path(args.out).resolve() != ROOT / 'public/assets/local' or Path(args.manifest).resolve() != ROOT / 'data/local-assets.json':
+            ap.error('--fx-skins controls output paths; omit --out and --manifest')
+        stage = args.fx_skins.resolve()
+        if stage.is_relative_to(ROOT):
+            ap.error('--fx-skins staging must be outside the project')
+        if stage.exists() and (not stage.is_dir() or any(stage.iterdir())):
+            ap.error('--fx-skins needs a new or empty staging directory')
+        args.fx_skins = stage
     if args.webp:
         return webp_only(Path(args.out), Path(args.manifest), print)
 
@@ -1208,6 +1230,14 @@ def main():
 
 
 def extract(args, ab_root):
+    if args.fx_skins:
+        # Do not enter the ordinary extraction/manifest merge path. A fresh tree contains only the FX output.
+        stage = args.fx_skins
+        n = fx.export_fx(ab_root, stage / 'public/assets/local', {}, print, selection=args.fx_set,
+                         jobs=args.fx_jobs or None, root=ROOT, fx_manifest=stage / 'data' / fx.FX_MANIFEST,
+                         texture_format=args.fx_texture_format, include_skins=True, skin_table=args.fx_skin_table,
+                         cache_dir=stage / '.cache/fx')
+        return 0 if n else 1
     theme_ids = autochess_themes.selected_ids(args.only)
     client = ab_root is not None
     jobs = select_jobs(args.only) if client else []

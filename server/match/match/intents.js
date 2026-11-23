@@ -48,6 +48,7 @@ export class MatchIntents {
       case 'g.offer': return this.requestOffer(ps, msg.offerId, msg.idx, msg);
       case 'g.offerRefresh': return this.requestOfferRefresh(ps, msg.offerId, msg.idx, msg);
       case 'g.ready': return ps.setReady(!!msg.ready);
+      case 'g.endlessVote': return this.voteEndless(ps, msg.cycle, msg.agree);
       case 'g.emote': return this.emote(ps, msg.id);
       // playerId: the player tapped (a shared field names two) — the watch preference (item 56)
       case 'g.watch': return this.watch(ps, msg.fieldId, msg.playerId ?? null);
