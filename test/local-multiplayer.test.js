@@ -587,9 +587,10 @@ test('endless vote browser overlay leads to a successful report after a continue
   });
 
   const host = await client(t, server, 'Host');
-  assert.equal((await host.request('room.create', { mode: 'coop', endless: true, prepUnlimited: true })).t, 'ok');
+  assert.equal((await host.request('room.create', { mode: 'coop', capacity: 8, endless: true, prepUnlimited: true })).t, 'ok');
   const { code } = host.state();
 
+  for (let i = 0; i < 6; i++) assert.equal((await host.request('room.addBot')).t, 'ok');
   const browser = await puppeteer.launch({
     executablePath: browserPath,
     headless: true,
@@ -729,6 +730,17 @@ test('endless vote browser overlay leads to a successful report after a continue
     const report = document.querySelector('[data-testid="settle-team"]');
     return report?.classList.contains('is-win') && report.querySelector('.steam__rounds .endless-progress')?.textContent.includes('第 2 轮 · 第 6 回合');
   }, { timeout: 5000 });
+  const list = await page.$('.steam__cards');
+  const box = await list.boundingBox();
+  assert.equal(await list.evaluate((el) => el.querySelectorAll('.tcard').length), 8);
+  assert.ok(await list.evaluate((el) => el.firstElementChild.getBoundingClientRect().left >= el.getBoundingClientRect().left));
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.move(box.x + box.width * 0.85, box.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.15, box.y + 60, { steps: 5 });
+    await page.mouse.up();
+  }
+  assert.ok(await list.evaluate((el) => el.lastElementChild.getBoundingClientRect().right <= el.getBoundingClientRect().right + 1));
   await page.click('[data-testid="settle-team"] .steam__detail');
   await page.waitForFunction(() => document.querySelector('.result__rnum.endless-progress')?.textContent.includes('第 2 轮 · 第 6 回合'), { timeout: 10000 });
 });

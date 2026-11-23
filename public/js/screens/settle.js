@@ -560,6 +560,23 @@ function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDe
   const rounds = useCountUp(r.roundsPassed, { ms: 900, delay: 450 });
   const progress = endlessProgressText(r.endless);
   const backRef = useRef(null);
+  const drag = useRef(null);
+  const scrollable = r.players.length > 4;
+  const beginDrag = (event) => {
+    const list = event.currentTarget;
+    if (event.pointerType !== 'mouse' || event.button !== 0 || list.scrollWidth <= list.clientWidth) return;
+    const rect = list.getBoundingClientRect();
+    const scale = list.offsetWidth / rect.width;
+    if (event.clientY >= rect.top + list.clientHeight / scale) return;
+    drag.current = { x: event.clientX, left: list.scrollLeft, scale };
+    list.setPointerCapture(event.pointerId);
+  };
+  const moveDrag = (event) => {
+    if (!drag.current) return;
+    const { x, left, scale } = drag.current;
+    event.currentTarget.scrollLeft = left + (x - event.clientX) * scale;
+  };
+  const endDrag = () => { drag.current = null; };
   const rawOf = (pid) => (Array.isArray(res?.players) ? res.players.find((x) => x && x.playerId === pid) : null) || null;
   const self = r.players.find((p) => p.playerId === myId) || null;
   const bg = self?.left ? 'quit' : r.victory ? 'success' : 'fail';
@@ -572,7 +589,10 @@ function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDe
     <div class="steam__bg" aria-hidden="true"><${Sprite} k=${`settle/settlemen_teamshow_${bg}`} /></div>
     <div class="settle__stage">
       <${Logo} />
-      <div class="steam__cards" style=${`--n:${r.players.length}`}>
+      <div class=${cx('steam__cards', scrollable && 'is-scrollable')} tabindex=${scrollable ? 0 : undefined}
+        role=${scrollable ? 'region' : undefined} aria-label=${scrollable ? t('同盟') : undefined}
+        onPointerDown=${beginDrag} onPointerMove=${moveDrag} onLostPointerCapture=${endDrag}
+        onDragStart=${(event) => { if (scrollable) event.preventDefault(); }}>
         ${r.players.length ? r.players.map((p, i) => html`<${TeamCard} key=${p.playerId} p=${p} i=${i} gd=${gd} self=${p.playerId === myId} victory=${r.victory} raw=${rawOf(p.playerId)} />`)
           : html`<p class="steam__none">${t('暂无结算数据')}</p>`}
       </div>
