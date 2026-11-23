@@ -458,6 +458,11 @@ export class MatchPhases {
       this._planBossWaves();
     } else {
       this.wave = buildNormalWave(this.gd, this.rngWaves, this.factions, r);
+      if (this.endless) this.wave = this.scaleEndlessWave(this.wave, r);
+    }
+    if (this.endless) {
+      const progress = { cycle: this.endlessCycle, round: r };
+      for (const ps of alive) if (!ps.left) this.endlessProgress.set(ps.playerId, progress);
     }
     for (const ps of alive) ps.startRound(r);
     for (const ps of alive) this.dispatch(ps, 'onRoundStart', { round: r });

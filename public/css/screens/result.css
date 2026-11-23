@@ -19,6 +19,7 @@
 .result__rounds { display: flex; align-items: baseline; gap: .12rem; margin-top: .1rem; }
 .result__rlabel { font-size: calc(.22 * var(--t)); color: var(--text-md); letter-spacing: .14em; }
 .result__rnum { font-size: calc(1.5 * var(--t)); line-height: .9; font-weight: 700; color: #fff; }
+.result__rnum.endless-progress { font-size: calc(.45 * var(--t)); line-height: 1.15; }
 .result__rof { font-size: calc(.4 * var(--t)); color: var(--text-dim); }
 .result__medals { display: flex; gap: .24rem; margin-top: .12rem; }
 .medal { position: relative; width: 1.1rem; display: flex; flex-direction: column; align-items: center; gap: .08rem; }
@@ -53,6 +54,7 @@
 .rcard__band { display: inline-flex; align-items: center; gap: .06rem; font-size: calc(.15 * var(--t)); color: var(--text-lo); }
 .rcard__round { display: flex; flex-direction: column; align-items: center; }
 .rcard__round b { font-size: calc(.34 * var(--t)); line-height: 1; color: #fff; }
+.rcard__round b.endless-progress { font-size: calc(.24 * var(--t)); line-height: 1.2; text-align: center; }
 .rcard__gain { display: flex; gap: .08rem; margin-top: .03rem; font-size: calc(.13 * var(--t)); color: var(--gold); }
 .rcard__gain span { display: inline-flex; align-items: center; gap: .02rem; }
 .rcard__gain .icon { width: .14rem; height: .14rem; }

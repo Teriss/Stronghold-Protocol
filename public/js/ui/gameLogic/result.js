@@ -6,6 +6,22 @@ import { t } from '../../../../shared/i18n.js';
 
 // ---- result -----------------------------------------------------------------------------------------------------------
 
+export function normalizeEndlessProgress(raw) {
+  if (!isObj(raw) || !Number.isSafeInteger(raw.cycle) || raw.cycle < 1) return null;
+  return {
+    cycle: raw.cycle,
+    ...(Number.isSafeInteger(raw.round) && raw.round > 0 ? { round: raw.round } : {}),
+    ...(Number.isSafeInteger(raw.cleared) && raw.cleared >= 0 && raw.cleared <= raw.cycle ? { cleared: raw.cleared } : {}),
+    ...(Number.isFinite(raw.multiplier) && raw.multiplier >= 1 ? { multiplier: raw.multiplier } : {}),
+    ...(typeof raw.hiddenReached === 'boolean' ? { hiddenReached: raw.hiddenReached } : {}),
+    ...(typeof raw.hiddenCleared === 'boolean' ? { hiddenCleared: raw.hiddenCleared } : {}),
+  };
+}
+
+export function endlessProgressText(progress) {
+  return progress?.round ? t('第 {cycle} 轮 · 第 {round} 回合', { cycle: progress.cycle, round: progress.round }) : null;
+}
+
 /**
  * Normalise an m.result payload (free-form; see screens/result.js header for the expected shape).
  * @param {any} res
@@ -22,6 +38,7 @@ export function normalizeResult(res, pub) {
     const title = typeof p.title === 'string' ? { id: p.title } : isObj(p.title) ? p.title : null;
     const alive = p.alive ?? pp.alive ?? true;
     const ownLp = Number.isFinite(p.lp) ? p.lp : (Number.isFinite(pp.lp) ? pp.lp : null);
+    const endless = normalizeEndlessProgress(p.endless);
     return {
       playerId: p.playerId,
       seat: int(p.seat, int(pp.seat, 0)),
@@ -33,6 +50,7 @@ export function normalizeResult(res, pub) {
       lpShared: teamLp != null,
       bandId: p.bandId ?? pp.bandId ?? null,
       roundsPassed: Number.isFinite(p.roundsPassed) ? p.roundsPassed : (Number.isFinite(r.roundsPassed) ? r.roundsPassed : 0),
+      ...(endless ? { endless } : {}),
       title,
       lineup: (Array.isArray(p.lineup) ? p.lineup : Array.isArray(p.board) ? p.board : []).filter(isObj).slice(0, 12),
       bonds: (Array.isArray(p.bonds) ? p.bonds : Array.isArray(pp.bonds) ? pp.bonds : []).filter(isObj),
@@ -42,9 +60,11 @@ export function normalizeResult(res, pub) {
       left: !!p.left,
     };
   }).sort((a, b) => a.seat - b.seat);
+  const endless = normalizeEndlessProgress(r.endless);
   return {
     victory: !!r.victory,
     roundsPassed: Number.isFinite(r.roundsPassed) ? r.roundsPassed : Math.max(0, ...players.map((p) => p.roundsPassed), 0),
+    ...(endless ? { endless } : {}),
     lastRound: Number.isFinite(r.lastRound) ? r.lastRound : (Number.isFinite(pub?.lastRound) ? pub.lastRound : 14),
     hiddenCleared: !!r.hiddenCleared,
     // the Hidden Core (R15) was fought: only then does the result show its boss medal (m.result.hiddenReached;

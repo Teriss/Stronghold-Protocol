@@ -391,6 +391,35 @@ export function buildNormalWave(gd, rng, factions, round) {
   };
 }
 
+/** The ordinary scheduled bodies that contribute to the field's enemy total. */
+export function baseWaveEnemies(gd, wave) {
+  return wave.spawns.filter((s) => s.tag !== 'boss' && s.tag !== 'part' && s.tag !== 'bounty'
+    && (s.countInTotal ?? !gd.enemy(s.enemyKey)?.notCountInTotal));
+}
+
+export function reinforceNormalWave(gd, wave, target) {
+  if (target <= 0 || !Number.isFinite(wave.timeLimit)) return wave;
+  const base = baseWaveEnemies(gd, wave);
+  const count = base.reduce((n, s) => n + s.count, 0);
+  const extra = target - count;
+  if (count === 0 || extra <= 0) return wave;
+  const start = Math.min(...base.map((s) => s.time));
+  // [ASSUMED] Leave the final 40% of the combat clock for the team to finish the reinforcements.
+  const end = wave.timeLimit * 0.6;
+  if (start >= end) return wave;
+  const spawns = wave.spawns.slice();
+  let source = 0;
+  let through = base[0].count;
+  for (let i = 0; i < extra; i++) {
+    const ticket = (i + 0.5) * count / extra;
+    while (ticket >= through) through += base[++source].count; // loop-cap: base wave length
+    // No action index: personal bounties re-time their original action, independently of the added enemies.
+    const { actionIndex: _actionIndex, ...spawn } = base[source];
+    spawns.push({ ...spawn, time: start + (end - start) * (i + 1) / extra, count: 1, interval: 0 });
+  }
+  return { ...wave, spawns };
+}
+
 /**
  * Boss / hidden round template for one boss field; escorts follow the pick of the round's own slot.
  * @param {{ bossId: string, solo: boolean }} opts solo → `_s` template (lone player or solo mode)

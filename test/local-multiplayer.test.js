@@ -13,12 +13,16 @@ import { wireOptions } from '../server/match/host/proxy.js';
 import { bossPoolHp, pairPlayers } from '../server/match/finalAssault.js';
 import { endlessMultiplier } from '../server/match/match/endless.js';
 import { VirtualScheduler } from '../server/match/scheduler.js';
-import { bountySpawns } from '../server/match/waves.js';
-import { getData } from '../server/data.js';
+import { baseWaveEnemies, bountySpawns, setupMatchWaves, withBounties } from '../server/match/waves.js';
+import { getData, getVersionData } from '../server/data.js';
+import { validateClientResult } from '../server/match/fields.js';
+import { createRng } from '../server/sim/rng.js';
+import { buildBattleSpec, compactResult, createBattleFromSpec } from '../server/sim/spec.js';
 import { chatText } from '../shared/chat.js';
 import { validateC2S } from '../shared/protocol.js';
 import { PHASE } from '../shared/constants.js';
 import { normalizeSp } from '../public/js/ui/gameLogic/draft.js';
+import { makeMatch } from './match/harness.js';
 
 async function client(t, server, name, token = null) {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
@@ -390,8 +394,9 @@ test('endless clears vote over WebSocket, revive eliminated seats and reroll onl
   assert.equal(fallen.layers[bond], 12);
   assert.ok(fallen.hand.includes(piece));
   assert.equal(m.pool.left(id), inStock);
-  assert.equal(m.gd.enemyScale(1).hpMul, m.gd.baseEnemyScale(1).hpMul * 1.8);
-  assert.equal(m.gd.enemyScale(1).atkMul, m.gd.baseEnemyScale(1).atkMul * 1.8);
+  assert.ok(m.gd.enemyScale(1).hpMul >= m.gd.baseEnemyScale(1).hpMul * 1.8);
+  assert.ok(m.gd.enemyScale(1).atkMul >= m.gd.baseEnemyScale(1).atkMul * 1.8);
+  assert.equal(m.gd.income(1), m.gd.income(m.gd.bossRound));
   assert.equal(bossPoolHp(m.gd, m.bossId, 2), Math.round(baseBossHp * 1.8));
   assert.equal((await restored.request('g.endlessVote', { cycle: 1, agree: true })).code, 'WRONG_PHASE');
   assert.equal(host.frames.some((f) => f.t === 'm.result'), false);
@@ -403,7 +408,7 @@ test('endless clears vote over WebSocket, revive eliminated seats and reroll onl
   m.sched.advance(30000);
   const result = await host.find((f) => f.t === 'm.result');
   assert.equal(result.victory, true);
-  assert.deepEqual(result.endless, { cycle: 2, cleared: 2, multiplier: 1.8 });
+  assert.deepEqual(result.endless, { cycle: 2, round: m.gd.bossRound, cleared: 2, multiplier: 1.8 });
   assert.equal(m.errorCount, 0);
 });
 
@@ -416,8 +421,117 @@ test('endless bonus compounds to 20× and a defeat goes directly to settlement',
   try {
     m.completeCycle({ victory: false, reason: 'defeat' });
     assert.equal(m.phase, PHASE.RESULT);
+    assert.equal(m.lastResultMsg.victory, false);
     assert.equal(m.lastResultMsg.endless.cleared, 0);
   } finally { m.dispose(); }
+});
+
+test('regulation endless continues the late enemy pressure in the same short fight', () => {
+  const data = getVersionData('act3autochess@V3_1');
+  for (const [difficulty, tail] of [['FUNNY', 45], ['ABYSS', 45]]) {
+    const { m } = makeMatch({ data, modeId: `mode_multi_${difficulty.toLowerCase()}`, mode: 'coop', difficulty, endless: true });
+    try {
+      const setup = setupMatchWaves(m.gd, createRng(42));
+      m.factions = setup.factions;
+      m.startRound(1);
+      const original = m.wave;
+      assert.equal(m.gd.income(1), 4);
+      assert.equal(baseWaveEnemies(m.gd, original).reduce((n, s) => n + s.count, 0), 5);
+      for (let r = m.gd.bossRound - 3; r < m.gd.bossRound; r++) m.startRound(r);
+      assert.equal(m.endlessTailCount, tail);
+      m.completeCycle({ victory: true, reason: 'victory' });
+      const [ps] = m.order;
+      assert.equal(m.voteEndless(ps, 1, true).ok, true);
+      assert.equal(m.gd.income(1), 12);
+      assert.equal(m.gd.income(3), 12);
+      assert.equal(m.gd.income(m.gd.bossRound), 12);
+      assert.notEqual(m.stageId, setup.stageId);
+      assert.equal(m.wave.templateId, original.templateId);
+      assert.equal(m.wave.timeLimit, original.timeLimit);
+      assert.deepEqual(m.wave.spawns.slice(0, original.spawns.length).map((s) => s.time), original.spawns.map((s) => s.time));
+      const additions = m.wave.spawns.slice(original.spawns.length);
+      assert.equal(additions.length, tail - 5);
+      assert.ok(additions.every((s) => s.time > original.spawns[0].time && s.time <= original.timeLimit * 0.6));
+      const scale = m.gd.enemyScale(1);
+      const base = m.gd.baseEnemyScale(1);
+      assert.equal(scale.speedMul, base.speedMul);
+      if (difficulty === 'ABYSS') {
+        assert.equal(scale.hpMul.toFixed(2), '11.90');
+        const late = m.gd.baseEnemyScale(m.gd.bossRound - 1);
+        assert.ok(Math.abs(scale.hpMul / scale.supplyHpMul - late.hpMul * 1.4 / late.supplyHpMul) < 1e-9);
+      }
+      const card = { enemyKey: original.spawns[0].enemyKey, count: 2, coin: 2, payout: 'kill' };
+      ps.bounties.push({ id: 'extra', card, roundsLeft: 1 });
+      const bounty = withBounties(m.gd, 1, original, ps.bounties, ps.playerId).filter((s) => s.tag === 'bounty');
+      const opts = m._normalOpts(ps);
+      assert.deepEqual(opts.spawns.filter((s) => s.tag === 'bounty'), bounty);
+      const spec = buildBattleSpec(opts);
+      const raw = createBattleFromSpec(spec, m.ds, { recordEvents: false, quiet: true }).runToEnd(4000);
+      const validated = validateClientResult(spec, compactResult(raw), { gd: m.gd });
+      assert.ok(validated.ok, validated.reason);
+      assert.equal(raw.perPlayer[ps.playerId].total, tail + 2);
+      assert.equal(m.nextEnemiesFor(ps).reduce((n, s) => n + s.count, 0), tail + 2);
+
+      m.startRound(m.gd.bossRound - 1);
+      assert.equal(baseWaveEnemies(m.gd, m.wave).reduce((n, s) => n + s.count, 0), Math.ceil(tail * 1.15));
+      m.completeCycle({ victory: true, reason: 'victory' });
+      assert.equal(m.voteEndless(ps, 2, true).ok, true);
+      assert.equal(baseWaveEnemies(m.gd, m.wave).reduce((n, s) => n + s.count, 0), Math.ceil(tail * 1.15));
+      m.endlessCycle = 30;
+      m.endlessTailCount = 65;
+      m.startRound(1);
+      assert.equal(baseWaveEnemies(m.gd, m.wave).reduce((n, s) => n + s.count, 0), 100);
+    } finally { m.dispose(); }
+  }
+});
+
+test('endless combat defeats keep the best team and individual clears and report actual reached rounds', () => {
+  for (const bossDefeat of [false, true]) {
+    const emitted = [];
+    const m = new Match({ data: getData(), modeId: 'mode_multi_hard', mode: 'coop', difficulty: 'HARD', endless: true,
+      seats: ['p1', 'p2'].map((playerId, seat) => ({ seat, playerId, name: playerId, connected: true })), scheduler: new VirtualScheduler(),
+      send(playerId, msg) { if (msg.t === 'm.result') emitted.push([playerId, msg]); }, broadcast() {}, onEnd() {} });
+    try {
+      const [first, second] = m.order;
+      m.startRound(3);
+      second.eliminate(3);
+      m.startRound(m.gd.hiddenRound);
+      m.hiddenReached = true;
+      m.completeCycle({ victory: true, hiddenCleared: true, reason: 'victory' });
+      assert.equal(m.voteEndless(first, 1, true).ok, true);
+      assert.equal(m.voteEndless(second, 1, true).ok, true);
+      assert.equal(m.endlessCycle, 2);
+      m.startRound(3);
+      first.eliminate(3);
+      m.startRound(bossDefeat ? m.gd.bossRound : 6);
+      if (bossDefeat) {
+        m.phase = PHASE.FINAL_ASSAULT;
+        m.bossPool = { hp: 10, maxHp: 100, byPlayer: new Map() };
+        m._finishFinal(false, () => { throw new Error('no fields in this fixture'); });
+        assert.equal(m.sched.runUntil(() => m.phase === PHASE.RESULT, { maxTime: 5000 }), true);
+      } else {
+        second.eliminate(6);
+        m.afterSettle();
+      }
+      const result = m.lastResultMsg;
+      const [winner, teammate] = result.players;
+      assert.equal(result.victory, true);
+      assert.equal(result.reason, 'endless-defeat');
+      assert.equal(result.hiddenCleared, true);
+      assert.equal(result.roundsPassed, m.gd.hiddenRound);
+      assert.deepEqual(result.endless, { cycle: 2, round: bossDefeat ? m.gd.bossRound : 6, cleared: 1, multiplier: 1.8 });
+      assert.equal(winner.alive, false);
+      assert.equal(winner.victory, true);
+      assert.equal(winner.roundsPassed, m.gd.hiddenRound);
+      assert.equal(winner.trophies, m.gd.config.trophies.hiddenCore.HARD);
+      assert.deepEqual(winner.endless, { cycle: 2, round: 3, hiddenReached: true, hiddenCleared: true });
+      assert.equal(teammate.victory, false);
+      assert.equal(teammate.roundsPassed, bossDefeat ? m.gd.bossRound - 1 : 5);
+      assert.equal(teammate.endless.round, result.endless.round);
+      m.finish({ victory: false, reason: 'defeat' });
+      assert.equal(emitted.length, 2);
+    } finally { m.dispose(); }
+  }
 });
 
 test('endless vote decline or hidden core handles vote cycle correctly', () => {
@@ -453,7 +567,7 @@ function findBrowserExecutable() {
   return null;
 }
 
-test('endless vote browser overlay displays above combat screen, handles clicks and confirms continuation', { timeout: 35000 }, async (t) => {
+test('endless vote browser overlay leads to a successful report after a continued defeat', { timeout: 60000 }, async (t) => {
   const browserPath = findBrowserExecutable();
   if (!browserPath) {
     t.skip('No Edge/Chrome browser executable found for browser regression test');
@@ -497,7 +611,7 @@ test('endless vote browser overlay displays above combat screen, handles clicks 
   await page.waitForFunction(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     return btns.some((b) => b.textContent.includes('准备'));
-  }, { timeout: 8000 });
+  }, { timeout: 15000 });
 
   await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
@@ -584,7 +698,7 @@ test('endless vote browser overlay displays above combat screen, handles clicks 
     const btns = Array.from(document.querySelectorAll('[data-testid="endless-vote"] button'));
     const agreeBtn = btns.find((b) => b.textContent.includes('已同意'));
     return agreeBtn && agreeBtn.disabled;
-  }, { timeout: 5000 });
+  }, { timeout: 10000 });
 
   // Now host agrees as well
   const hostVoteRes = await host.request('g.endlessVote', { cycle: 1, agree: true });
@@ -597,5 +711,25 @@ test('endless vote browser overlay displays above combat screen, handles clicks 
 
   // Endless vote modal should be unmounted
   await page.waitForFunction(() => !document.querySelector('[data-testid="endless-vote"]'), { timeout: 5000 });
+
+  m.guard(() => {
+    m.startRound(6);
+    for (const ps of m.alivePlayers()) { ps.lp = 0; ps.eliminate(6); }
+    m.afterSettle();
+  });
+  const result = await host.find((f) => f.t === 'm.result');
+  assert.equal(result.victory, true);
+  assert.equal(result.reason, 'endless-defeat');
+  await page.waitForFunction(() => {
+    const report = document.querySelector('[data-testid="settle-self"]');
+    return report?.classList.contains('is-win') && report.querySelector('.endless-progress')?.textContent.includes('第 2 轮 · 第 6 回合');
+  }, { timeout: 8000 });
+  await page.click('[data-testid="settle-self"] .settle__next');
+  await page.waitForFunction(() => {
+    const report = document.querySelector('[data-testid="settle-team"]');
+    return report?.classList.contains('is-win') && report.querySelector('.steam__rounds .endless-progress')?.textContent.includes('第 2 轮 · 第 6 回合');
+  }, { timeout: 5000 });
+  await page.click('[data-testid="settle-team"] .steam__detail');
+  await page.waitForFunction(() => document.querySelector('.result__rnum.endless-progress')?.textContent.includes('第 2 轮 · 第 6 回合'), { timeout: 10000 });
 });
 

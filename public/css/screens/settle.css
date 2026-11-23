@@ -362,6 +362,9 @@ span.settle__nexticon .icon { width: .34rem; height: .34rem; }
   border-left: 2px solid rgba(200, 214, 210, .14); border-right: 2px solid rgba(200, 214, 210, .14); }
 .steam__rounds span { font-size: calc(.27 * var(--t)); color: #a9b3b0; white-space: nowrap; }
 .steam__rounds b { position: relative; font-family: var(--font-display); font-size: calc(.8 * var(--t)); font-weight: 600; line-height: 1; color: #4af2c4; text-shadow: 0 0 .16rem rgba(30, 240, 180, .45); }
+.sself .sself__rounds b.endless-progress,
+.steam__rounds b.endless-progress { font-family: inherit; font-size: calc(.25 * var(--t)); line-height: 1.25; text-align: center; }
+.tcard__rounds b.endless-progress { font-family: inherit; font-size: calc(.19 * var(--t)); line-height: 1.15; text-align: center; }
 .steam.is-lose .steam__rounds b { color: #ff574a; text-shadow: 0 0 .16rem rgba(255, 60, 50, .4); }
 .steam__when { position: absolute; left: 6.5rem; top: 9.36rem; width: 4.9rem; display: flex; flex-direction: column; gap: .16rem; }
 .steam__row { position: relative; isolation: isolate; height: .48rem; display: flex; align-items: center; gap: .14rem; padding: 0 .16rem; border-radius: .24rem;

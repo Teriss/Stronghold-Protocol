@@ -57,6 +57,7 @@ import { MAX_SEATS } from '../../../shared/constants.js';
 import { PHASE } from '../../../shared/constants.js';
 import { sanitizeName } from './playerName.js';
 import { DEFAULT_VERSION, versionById } from '../../../shared/versions.js';
+import { normalizeEndlessProgress } from './gameLogic/result.js';
 
 /** Current record-envelope version (bump + add a MIGRATIONS step when the record shape changes). */
 export const STATS_VERSION = 3;
@@ -223,6 +224,7 @@ function normalizePlayerRow(raw, quit = false) {
   const bonds = (Array.isArray(p.bonds) ? p.bonds : []).filter(isObj).slice(0, MAX_BONDS).map((b) => ({
     bondId: str(b.bondId) || str(b.id) || '', layers: int(b.layers, 0), active: bool(b.active),
   })).filter((b) => b.bondId);
+  const endless = normalizeEndlessProgress(p.endless);
   return {
     playerId: str(p.playerId) || '',
     seat: int(p.seat, 0),
@@ -231,8 +233,9 @@ function normalizePlayerRow(raw, quit = false) {
     ...(Number.isInteger(p.aiTakeoverRound) && p.aiTakeoverRound >= 1 ? { aiTakeoverRound: p.aiTakeoverRound } : {}),
     left: bool(p.left),
     alive: bool(p.alive, true),
-    victory: bool(p.victory), // server semantics: team won AND this player was still in at the end
+    victory: bool(p.victory),
     roundsPassed: quit ? num(p.roundsPassed) : int(p.roundsPassed, 0),
+    ...(endless ? { endless } : {}),
     ...(Number.isInteger(p.creditedKills) && p.creditedKills >= 0 && p.creditedKills <= 1e9 ? { creditedKills: p.creditedKills } : {}),
     eliminatedRound: num(p.eliminatedRound),
     lp: num(p.lp),
@@ -261,6 +264,7 @@ export function normalizeRecord(raw) {
   const quit = r.end === 'quit';
   const players = r.players.filter(isObj).slice(0, MAX_PLAYERS).map((p) => normalizePlayerRow(p, quit));
   if (!players.length) return null;
+  const endless = normalizeEndlessProgress(r.endless);
   const rec = {
     id: str(r.id),
     v: STATS_VERSION,
@@ -268,6 +272,7 @@ export function normalizeRecord(raw) {
     end: quit ? 'quit' : 'settled',
     victory: bool(r.victory),
     roundsPassed: quit ? num(r.roundsPassed) : int(r.roundsPassed, 0),
+    ...(endless ? { endless } : {}),
     lastRound: num(r.lastRound),
     hiddenReached: bool(r.hiddenReached),
     hiddenCleared: bool(r.hiddenCleared),
@@ -398,7 +403,7 @@ export function peekStatsRecords() {
 // ---- compaction + the storage budget ---------------------------------------------------------------------------
 
 const COMPACT_FRAME = ['id', 'v', 't', 'end', 'victory', 'roundsPassed', 'lastRound', 'hiddenReached', 'hiddenCleared', 'reason', 'modeId',
-  'difficulty', 'roomMode', 'durationMs', 'selfId', 'vs', 'content', 'version', 'test', 'testActions'];
+  'difficulty', 'roomMode', 'durationMs', 'selfId', 'vs', 'content', 'version', 'test', 'testActions', 'endless'];
 
 /**
  * The compact form of a record: the frame and the player's OWN row without lineup, bonds and name — everything the
@@ -414,6 +419,7 @@ export function compactRecord(rec) {
   out.compact = true;
   out.players = self ? [{
     playerId: self.playerId, seat: self.seat, alive: self.alive, victory: self.victory, roundsPassed: self.roundsPassed,
+    ...(self.endless ? { endless: self.endless } : {}),
     eliminatedRound: self.eliminatedRound, bandId: self.bandId, title: self.title, left: self.left, stats: self.stats,
     ...(Number.isInteger(self.aiTakeoverRound) ? { aiTakeoverRound: self.aiTakeoverRound } : {}),
     trophies: self.trophies,
@@ -518,6 +524,7 @@ export function buildRecord(res, ctx = {}) {
     end: 'settled',
     victory: bool(r.victory),
     roundsPassed: int(r.roundsPassed, 0),
+    endless: r.endless,
     lastRound: num(r.lastRound),
     hiddenReached: bool(r.hiddenReached),
     hiddenCleared: bool(r.hiddenCleared),
@@ -665,6 +672,7 @@ export function recordToResult(rec) {
   const res = {
     victory: r.victory,
     roundsPassed: r.roundsPassed,
+    ...(r.endless ? { endless: r.endless } : {}),
     hiddenReached: r.hiddenReached,
     hiddenCleared: r.hiddenCleared,
     reason: r.reason,
@@ -813,7 +821,7 @@ export function selfRowOf(rec) {
     || null;
 }
 
-/** Whether this record counts as a win for its self player (per-row victory = team won AND still in). */
+/** Whether this record counts as a win for its self player, using the recorded personal result. */
 const selfWon = (rec, self) => (self ? !!self.victory : !!rec.victory);
 
 /**
@@ -904,13 +912,15 @@ export function aggregateStats(records, { modded: withModded = false } = {}) {
       }
     }
     const won = selfWon(rec, self);
+    const hiddenReached = self?.endless?.hiddenReached ?? rec.hiddenReached;
+    const hiddenCleared = self?.endless?.hiddenCleared ?? rec.hiddenCleared;
     if (won) out.wins++;
     const rounds = roundsOf(rec);
     out.rounds.total += rounds;
     out.rounds.max = Math.max(out.rounds.max, rounds);
     out.duration.totalMs += num(rec.durationMs) || 0;
-    if (rec.hiddenReached) out.hidden.reached++;
-    if (rec.hiddenCleared) out.hidden.cleared++;
+    if (hiddenReached) out.hidden.reached++;
+    if (hiddenCleared) out.hidden.cleared++;
     // Sum the actual settlement award, including defeats, rather than teammates' or solo-mode trophies.
     if (rec.end !== 'quit' && rec.roomMode === 'coop' && Number.isFinite(self?.trophies)) out.trophies += Math.max(0, self.trophies);
 
@@ -918,13 +928,13 @@ export function aggregateStats(records, { modded: withModded = false } = {}) {
     const bd = (out.byDifficulty[d] ||= { games: 0, wins: 0, hiddenCleared: 0 });
     bd.games++;
     if (won) bd.wins++;
-    if (rec.hiddenCleared) bd.hiddenCleared++;
+    if (hiddenCleared) bd.hiddenCleared++;
 
     if (rec.roomMode === 'solo' || rec.roomMode === 'coop') {
       const mode = out.byMode[rec.roomMode];
       mode.games++;
       if (won) mode.wins++;
-      if (won && rec.hiddenCleared) mode.hiddenCleared++;
+      if (won && hiddenCleared) mode.hiddenCleared++;
     }
 
     const titleId = self?.title?.id;

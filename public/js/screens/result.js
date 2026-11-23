@@ -19,6 +19,7 @@ import { useEffect } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, MicroLabel, DifficultyTag } from '../ui/components.js';
 import { useGameData, Img, UnitThumb, BandIcon, PlayerAvatar, BondGlyph, LpTower, Sprite } from '../ui/gameComponents.js';
 import { normalizeResult, fmtNum, diyRecordFor, cardStandIn, standInForText } from '../ui/gameLogic.js';
+import { endlessProgressText } from '../ui/gameLogic/result.js';
 import { data } from '../data.js';
 import { enemyIconUrl, titleIconUrl, uiUrl } from '../ui/assetUrls.js';
 import { audio } from '../audio.js';
@@ -90,7 +91,7 @@ function PlayerCard({ p, myId, titles, best, solo = false, skinOwnerId = null })
         ${bonds.length ? html`<div class="rcard__bonds">${bonds.map((b) => html`<span key=${b.bondId} class=${cx('rbond', b.active && 'is-on')} title=${gd.bond(b.bondId)?.name || b.bondId}>
           <${BondGlyph} bondId=${b.bondId} />${b.hideLayers ? null : html`<b class="num">${b.layers ?? 0}</b>`}</span>`)}</div>` : null}
       </div>
-      <div class="rcard__round"><${MicroLabel}>ROUNDS</${MicroLabel}><b class="num">${p.roundsPassed}</b>
+      <div class="rcard__round"><${MicroLabel}>${p.endless?.round ? t('到达') : 'ROUNDS'}</${MicroLabel}><b class=${p.endless?.round ? 'endless-progress' : 'num'}>${endlessProgressText(p.endless) ?? p.roundsPassed}</b>
         ${p.trophies > 0 || p.reward > 0 ? html`<span class="rcard__gain">${p.trophies > 0 ? html`<span title=${t('获得奖杯')}><${Icon} name="crown" /><b class="num">+${p.trophies}</b></span>` : null}${p.reward > 0 ? html`<span title=${t('卫戍认证')}><${Icon} name="shield" /><b class="num">+${p.reward}</b></span>` : null}</span>` : null}
       </div>
       ${titleName ? html`<div class="rcard__title" title=${titleRec?.text || p.title?.text || ''}>
@@ -116,6 +117,7 @@ export function ResultView({ res, pub = null, myId = null, backLabel, onBack, qu
   // [ASSUMED] Stored statistics have no outfit snapshot: without pub, do not borrow a live match's choices.
   const gd = useGameData();
   const r = normalizeResult(res, pub);
+  const progress = endlessProgressText(r.endless);
   const titles = Array.isArray(gd.config?.titles) ? gd.config.titles : [];
   const best = {};
   for (const [k] of STAT_ROWS) {
@@ -144,9 +146,9 @@ export function ResultView({ res, pub = null, myId = null, backLabel, onBack, qu
           <p class="t-dim">${t('本局为测试对局，不计入统计、成就、称号、徽章与卫戍认证。')}</p>` : null}
         <p class="result__sub">${r.victory ? t('成功卫戍 · 敌方领袖已被击败') : t('防线已被突破')}</p>
         <div class="result__rounds">
-          <span class="result__rlabel">${t('通过回合')}</span>
-          <b class="result__rnum num">${r.roundsPassed}</b>
-          ${r.roundsPassed <= r.lastRound ? html`<span class="result__rof num">/${r.lastRound}</span>` : null}
+          <span class="result__rlabel">${progress ? t('到达') : t('通过回合')}</span>
+          <b class=${progress ? 'result__rnum endless-progress' : 'result__rnum num'}>${progress ?? r.roundsPassed}</b>
+          ${!progress && r.roundsPassed <= r.lastRound ? html`<span class="result__rof num">/${r.lastRound}</span>` : null}
         </div>
         <div class="result__medals">
           ${boss ? html`<div class=${cx('medal', r.victory && 'is-done')} title=${boss.name}>

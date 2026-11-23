@@ -19,7 +19,7 @@ import {
 } from '../../public/js/ui/stats.js';
 import { createStore, emptyMatch } from '../../public/js/store.js';
 import { normalizeResult } from '../../public/js/ui/gameLogic.js';
-import { PHASE } from '../../shared/constants.js';
+import { MAX_SEATS, PHASE } from '../../shared/constants.js';
 
 /** A realistic m.result in the shape server/match/results.js buildResult emits (replayed byte-identically). */
 function baseResult(over = {}) {
@@ -47,6 +47,23 @@ function baseResult(over = {}) {
     ...over,
   };
 }
+
+test('endless reached progress survives local history while normal round counts remain numeric', () => {
+  const finish = baseResult({ endless: { cycle: 2, round: 6, cleared: 1, multiplier: 1.8 } });
+  finish.players[0].endless = { cycle: 2, round: 3, hiddenReached: true, hiddenCleared: true };
+  finish.players[1].endless = { cycle: 2, round: 6, hiddenReached: false, hiddenCleared: false };
+  const record = buildRecord(finish, { myId: 'p1' });
+  const replay = normalizeResult(recordToResult(JSON.parse(JSON.stringify(record))));
+  assert.deepEqual(replay.endless, finish.endless);
+  assert.deepEqual(replay.players[0].endless, finish.players[0].endless);
+  assert.equal(replay.roundsPassed, 15);
+  assert.equal(replay.players[0].roundsPassed, 16);
+  assert.deepEqual(compactRecord(record).players[0].endless, finish.players[0].endless);
+  assert.equal(aggregateStats([record]).hidden.cleared, 1);
+  const teammate = buildRecord(finish, { myId: 'p2' });
+  assert.equal(aggregateStats([teammate]).hidden.cleared, 0);
+  assert.equal(Object.hasOwn(normalizeResult(baseResult()), 'endless'), false);
+});
 
 /** Fake localStorage: Map-backed, with an optional byte budget that makes setItem throw like a full quota. */
 function fakeStorage({ budget = Infinity } = {}) {
@@ -478,8 +495,8 @@ describe('local stats: bounded storage', () => {
       })),
       bigUnknown: 'y'.repeat(1e6),
     });
-    assert.ok(JSON.stringify(rec).length < 40_000, `${JSON.stringify(rec).length} chars`);
-    assert.equal(rec.players.length, 6);
+    assert.ok(JSON.stringify(rec).length < 7_000 * MAX_SEATS, `${JSON.stringify(rec).length} chars`);
+    assert.equal(rec.players.length, MAX_SEATS);
     assert.equal(rec.players[0].lineup.length, 12);
     assert.equal(rec.players[0].lineup[0].items.length, 4);
     assert.equal(rec.players[0].name.length, 24);

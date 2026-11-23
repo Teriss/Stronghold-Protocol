@@ -197,6 +197,22 @@ rule governs the shared pool, 自选 stock, shop, rewards and grants. INFO_CHECK
 provisional pool and 自选 stock before the draft, without drawing RNG. Reroll resets the groups/pick and stocks;
 public snapshots, reconnects and input replay retain the choice. Covenant draws and exclusion are unchanged.
 
+### 无尽同盟续关（§37.240）
+
+首循环沿用所选版本和难度。通关后有 30 秒供尚未离场的真人席位投票，同意后优先更换战场并返回第 1 回合。
+续关保留波次排程、卡池、阵容、装备、商店进度、盟约层数和回合时长。复活未离场的淘汰席位。
+从第 2 循环起，每回合基础收入为 `economy.incomeCap`，额外资金继续按来源结算。
+
+[ASSUMED] 循环倍率 `M(c) = min(20, 1.8^(c−1))`。普通敌人的生命与攻击分别取本回合基准乘 `M(c)` 与
+末轮普通战斗基准乘过渡倍率的较高值。过渡倍率从 `M(c−1)`、`M(c)` 的中点线性升至 `M(c)`。
+频次敌人的生命单独按移除补给线的基准计算。移速与领袖战仍按原有规则。
+[ASSUMED] 以首循环最后三个普通回合的最大计数波次为基准 `B`。续关普通回合的增援目标是
+`min(100, ceil(B × min(2, 1 + 0.15 × (c−2+p))))`，`p` 是当前循环普通回合的线性进度（首回合为 0，末回合为 1）。
+超过目标的原有波次保留。增援按当前波次构成复用路线，在原始首批出怪与时限的 60% 之间加入，既有悬赏仍按原动作插队。
+
+同盟和每个实际通关席位各自保留最好成绩（含隐秘核心）。续关中的战斗失败按已通关成绩结算一次。结算中记录同盟和个人的
+最后到达轮次与回合，分别用于显示。个人死亡、主动退出和试验局原有的奖励资格规则继续适用，曾实际通关的席位在续关淘汰后保有其通关资格。
+
 ### 6.6 AI players (bot.js)
 
 Match selects a trusted server-side implementation through `botStrategies.js`: `opts.botStrategy` (registered ID

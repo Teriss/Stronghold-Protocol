@@ -55,6 +55,11 @@ only unequip=allow permits it in PREP before ready. `room.loadout` keeps its exi
 operators in PREP under prepLoadout=prep. Room content summaries add `rules` only when declared. No protocol version
 bump; clients without these controls keep their existing messages.
 
+无尽 `m.result.endless` 含 `cycle`、`cleared`、`multiplier` 和可选的 `round`（同盟最后进入的回合）。
+参与过回合的 `m.result.players[]` 带 `endless.{cycle,round,hiddenReached,hiddenCleared}`，前两项是个人
+最后到达的位置，后两项是其最佳通关成绩的隐秘核心记录。续关战败且此前已通关时，`victory: true`、
+`reason: 'endless-defeat'`，个人 `victory` 取自实际通关资格。`roundsPassed` 仍为奖励与统计使用的数值。
+
 ### 8.3 Exact view shapes (normative for match ⇄ UI)
 
 `m.private`:

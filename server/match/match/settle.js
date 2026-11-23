@@ -141,14 +141,14 @@ export class MatchSettle {
   }
 
   afterSettle() {
-    if (!this.alivePlayers().length) { this.finish({ victory: false, reason: 'eliminated' }); return; }
+    if (!this.alivePlayers().length) { this.finish({ victory: false, reason: 'eliminated', endlessCombatDefeat: this.endless }); return; }
     resetRoundCounters(this); // AI bot merge-counter resets each round (server/match/botEmotes.js)
     this.startRound(this.round + 1);
   }
 
-  finish({ victory, hiddenCleared = false, reason = 'defeat' }) {
+  finish({ victory, hiddenCleared = false, reason = 'defeat', endlessCombatDefeat = false }) {
     // A command that ends a test match must be audited/counted before publishing its result.
-    if (this.test && this._testApplying) { this._testOutcome = { victory, hiddenCleared, reason }; return; }
+    if (this.test && this._testApplying) { this._testOutcome = { victory, hiddenCleared, reason, endlessCombatDefeat }; return; }
     if (this.ended || this.disposed) return;
     this.offersDispose();
     this.endlessVote = null;
@@ -163,13 +163,21 @@ export class MatchSettle {
     this.phase = PHASE.RESULT;
     this.deadline = 0;
     for (const f of this.fields) f.live = false;
-    this.outcome = { victory: !!victory, hiddenReached: this.hiddenReached, hiddenCleared: !!hiddenCleared, reason };
+    const recoveredClear = !victory && endlessCombatDefeat && !!this.endlessBestClear;
+    const best = victory || recoveredClear ? this.endlessBestClear : null;
+    this.outcome = {
+      victory: !!(victory || recoveredClear),
+      hiddenReached: best?.hiddenReached ?? this.hiddenReached,
+      hiddenCleared: best?.hiddenCleared ?? !!hiddenCleared,
+      reason: recoveredClear ? 'endless-defeat' : reason,
+    };
     let result;
     try {
       result = buildResult(this, this.outcome);
     } catch (e) {
       this.reportError('buildResult', e);
-      result = { t: 'm.result', victory: !!victory, roundsPassed: 0, reason, modeId: this.modeId, difficulty: this.difficulty, players: [] };
+      result = { t: 'm.result', victory: this.outcome.victory, roundsPassed: best?.roundsPassed ?? 0,
+        reason: this.outcome.reason, modeId: this.modeId, difficulty: this.difficulty, players: [] };
     }
     if (this.test) {
       result.test = true;

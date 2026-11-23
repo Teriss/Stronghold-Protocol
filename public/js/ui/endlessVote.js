@@ -23,13 +23,11 @@ export function EndlessVote({ pub }) {
   };
 
   const title = t('第 {n} 轮已通关', { n: cycle });
-  const desc = t('全员同意后更换地图、复活队友，敌方生命值和攻击力升至基准的 {n} 倍。', {
-    n: vote.nextMultiplier.toLocaleString(undefined, { maximumFractionDigits: 2 })
-  });
+  const desc = t('全员同意后更换地图并复活队友。续关采用强化敌人和更密的波次，每回合基础收入固定。');
 
   const playersList = html`<div class="vervote__players endless-vote__players" aria-live="polite">
     ${vote.voters.map((id) => html`<span key=${id} class=${vote.agreed.includes(id) ? 'is-agreed' : ''}>
-      ${names.get(id) || t('博士')} · ${t(vote.agreed.includes(id) ? '已同意' : '待同意')}
+      ${names.get(id) || t('博士')} · ${vote.agreed.includes(id) ? t('已同意') : t('待同意')}
     </span>`)}
   </div>`;
 
@@ -48,7 +46,7 @@ export function EndlessVote({ pub }) {
   // 有投票权的玩家（含名单内的淘汰队员）：接入 Modal 弹窗层，复用遮罩、层级与焦点管理
   const actions = html`
     <${Button} variant="secondary" disabled=${!online || pending} onClick=${() => send(false)}>${t('结束模拟')}<//>
-    <${Button} variant="primary" disabled=${!online || pending || voted} onClick=${() => send(true)}>${t(voted ? '已同意' : '继续下一轮')}<//>
+    <${Button} variant="primary" disabled=${!online || pending || voted} onClick=${() => send(true)}>${voted ? t('已同意') : t('继续下一轮')}<//>
   `;
 
   return html`<${Modal}

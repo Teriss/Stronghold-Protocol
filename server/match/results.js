@@ -106,12 +106,18 @@ export function buildResult(m, outcome) {
   const { victory, hiddenReached, hiddenCleared } = outcome;
   const players = [...m.players.values()].sort((a, b) => a.seat - b.seat);
   const titles = assignTitles(gd, players.filter(ps => !Number.isInteger(ps.aiTakeoverRound)), victory);
-  const teamRounds = victory ? gd.bossRound + (hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
+  const endlessClear = victory && m.endlessBestClear;
+  const currentCycleFailed = outcome.reason === 'endless-defeat';
+  const currentRounds = victory && !currentCycleFailed ? gd.bossRound + (hiddenCleared ? 1 : 0) : Math.max(0, Math.min(m.round, gd.bossRound) - 1);
+  const teamRounds = endlessClear ? endlessClear.roundsPassed : currentRounds;
   const rows = players.map((ps) => {
-    const roundsPassed = !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1) : teamRounds;
+    const clear = endlessClear && m.endlessPlayerClears.get(ps.playerId);
+    const progress = m.endlessProgress?.get(ps.playerId);
+    const partial = !ps.alive && ps.eliminatedRound != null ? Math.max(0, ps.eliminatedRound - 1) : currentRounds;
+    const roundsPassed = clear ? clear.roundsPassed : partial;
     const lineup = lineupView(gd, ps);
-    // the team's clear counts for the players still in; an eliminated / departed teammate did not pass the boss round
-    const cleared = victory && ps.alive;
+    // An endless clear belongs to the players present when it happened, even if a later cycle eliminated them.
+    const cleared = endlessClear ? !!clear : victory && ps.alive;
     return {
       playerId: ps.playerId,
       seat: ps.seat,
@@ -122,6 +128,7 @@ export function buildResult(m, outcome) {
       alive: ps.alive,
       victory: cleared,
       roundsPassed,
+      ...(progress ? { endless: { ...progress, hiddenReached: !!clear?.hiddenReached, hiddenCleared: !!clear?.hiddenCleared } } : {}),
       creditedKills: ps.creditedKills,
       eliminatedRound: ps.eliminatedRound,
       lp: Math.max(0, ps.lp),
@@ -135,7 +142,7 @@ export function buildResult(m, outcome) {
         perfectRounds: ps.stats.perfectRounds,
       },
       title: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? null : titles.get(ps.playerId) ?? null,
-      trophies: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : trophiesFor(gd, roundsPassed, cleared && hiddenCleared),
+      trophies: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : trophiesFor(gd, roundsPassed, clear?.hiddenCleared ?? (cleared && hiddenCleared)),
       reward: m.test === true || Number.isInteger(ps.aiTakeoverRound) ? 0 : rewardFor(gd, roundsPassed),
     };
   });
@@ -146,7 +153,8 @@ export function buildResult(m, outcome) {
     hiddenReached,
     hiddenCleared,
     reason: outcome.reason,
-    ...(m.endless ? { endless: { cycle: m.endlessCycle, cleared: m.endlessCleared, multiplier: gd.endlessEnemyMultiplier } } : {}),
+    ...(m.endless ? { endless: { cycle: m.endlessCycle, cleared: m.endlessCleared, multiplier: gd.endlessEnemyMultiplier,
+      ...(m.round > 0 ? { round: m.round } : {}) } } : {}),
     // the merged Final Assault pool (null before round 14); players[].lp are the alive players' shares of it
     teamLp: m.teamLp != null ? Math.max(0, Math.round(m.teamLp)) : null,
     modeId: m.modeId,

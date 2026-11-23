@@ -34,6 +34,7 @@ import { html, Icon, MicroLabel, Spinner, Button, Modal, confirmDialog } from '.
 import { useGameData, makeLookups, BandIcon, BondGlyph, Img } from '../ui/gameComponents.js';
 import { data, useData } from '../data.js';
 import { fmtNum, diyRecordFor, cardStandIn } from '../ui/gameLogic.js';
+import { endlessProgressText } from '../ui/gameLogic/result.js';
 import { useDocClass } from '../ui/device.js';
 import { uiUrl, chessAvatarUrl, chessPortraitUrl, itemIconUrl, medalIconUrl } from '../ui/assetUrls.js';
 import { identity } from '../net.js';
@@ -514,6 +515,7 @@ function HistoryRow({ rec, gd, onOpen }) {
   const band = self?.bandId ? gd.band(self.bandId) : null;
   const rounds = roundsOf(rec);
   const known = Number.isFinite(self?.roundsPassed) || Number.isFinite(rec.roundsPassed);
+  const progress = endlessProgressText(self?.endless ?? rec.endless);
   // another version's settlement needs its data on the page (see the header): offered as a switch outside a room
   const version = recordVersion(rec);
   const shown = useStore(shownVersion);
@@ -537,7 +539,7 @@ function HistoryRow({ rec, gd, onOpen }) {
       ${!counted ? html`<em class="st-chip">${t('不计入统计')}</em>` : null}
       ${isModdedRecord(rec) ? html`<em class="st-chip is-modded" title=${(rec.content.plugins || []).join(', ')}>${t('非官方')}</em>` : null}
       <${VersionTag} version=${rec.version ?? null} compact=${true} class="st-chip" /></td>
-    <td class="num">${known ? fmtNum(rounds) : '—'}</td>
+    <td class=${progress ? '' : 'num'}>${progress ?? (known ? fmtNum(rounds) : '—')}</td>
     <td class="st-go" aria-hidden="true">${view ? html`<${Icon} name="chevronRight" />` : null}</td>
   </tr>`;
 }

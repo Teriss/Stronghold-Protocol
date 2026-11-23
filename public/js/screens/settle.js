@@ -19,6 +19,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../ven
 import { html, Icon, DifficultyIcon, Spinner } from '../ui/components.js';
 import { OperatorImage, useGameData, Img, Sprite, PromotionIcon, PlayerAvatar, BondGlyph, BandIcon } from '../ui/gameComponents.js';
 import { normalizeResult, diyRecordFor, cardStandIn, standInForText } from '../ui/gameLogic.js';
+import { endlessProgressText } from '../ui/gameLogic/result.js';
 import { data } from '../data.js';
 import { itemIconUrl, enemyIconUrl, titleIconUrl } from '../ui/assetUrls.js';
 import { store, useStore, emptyMatch } from '../store.js';
@@ -450,9 +451,12 @@ function SelfPage({ r, res, raw, self, gd, prog, content, onNext, version = null
   const [leaving, setLeaving] = useState(false);
   const nextRef = useRef(null);
   const rounds = useCountUp(self.roundsPassed, { ms: 700, delay: 350 });
+  const progress = endlessProgressText(self.endless);
   const boss = cleared && r.bossId ? gd.boss(r.bossId) : null;
-  const hidden = cleared && r.hiddenReached && r.hiddenBossId ? gd.boss(r.hiddenBossId) : null;
-  const medals = [boss && { kind: 'boss', rec: boss, done: true, gd }, hidden && { kind: 'hidden', rec: hidden, done: r.hiddenCleared, gd }].filter(Boolean);
+  const hiddenReached = self.endless?.hiddenReached ?? r.hiddenReached;
+  const hiddenCleared = self.endless?.hiddenCleared ?? r.hiddenCleared;
+  const hidden = cleared && hiddenReached && r.hiddenBossId ? gd.boss(r.hiddenBossId) : null;
+  const medals = [boss && { kind: 'boss', rec: boss, done: true, gd }, hidden && { kind: 'hidden', rec: hidden, done: hiddenCleared, gd }].filter(Boolean);
   const slots = Array.from({ length: 10 }, (_, i) => self.lineup[i] || null);
   const milestones = gd.config?.rewards?.milestones;
   useEffect(() => {
@@ -477,7 +481,7 @@ function SelfPage({ r, res, raw, self, gd, prog, content, onNext, version = null
       <div class="sself__band">${self.bandId ? html`<${BandIcon} bandId=${self.bandId} size="lg" />` : html`<${PlayerAvatar} player=${self} self=${true} />`}<i aria-hidden="true"></i></div>
       <div class="sself__mode"><${ModePill} r=${r} /><${UnofficialMark} room=${content ? { content } : null} class="sself__modmark" /><${VersionTag} version=${version} class="sself__vertag" /><${SettleTestMark} res=${res} /></div>
       <${SettleTitle} class="sself__title">${cleared ? t('模拟完成') : t('模拟中断')}</${SettleTitle}>
-      <div class="sself__rounds"><span>${t('通过回合')}</span><b class="num">${rounds}</b></div>
+      <div class="sself__rounds"><span>${progress ? t('到达') : t('通过回合')}</span><b class=${progress ? 'endless-progress' : 'num'}>${progress ?? rounds}</b></div>
       ${medals.length ? html`<div class="sself__medals">${medals.map((m, i) => html`<${Medal} key=${m.kind} m=${m} i=${i} />`)}</div>` : null}
       <div class="splate">
         <${PlayerAvatar} player=${self} self=${true} class="splate__ava" />
@@ -523,6 +527,7 @@ function titleView(p, gd) {
 }
 
 function TeamCard({ p, i, gd, self, victory, raw }) {
+  const progress = endlessProgressText(p.endless);
   const ace = aceOf(p.lineup);
   const v = ace ? unitView(ace, gd) : null;
   const title = titleView(p, gd);
@@ -535,7 +540,7 @@ function TeamCard({ p, i, gd, self, victory, raw }) {
       ${p.left ? html`<span class="tcard__cut">${t('连接中断')}</span>` : null}
       ${title ? html`<div class="tcard__title" title=${title.text}>
         <${Img} src=${title.icon} class="tcard__ticon" fallback=${html`<${Icon} name="crown" class="tcard__ticon" />`} /><b>${title.name}</b></div>` : null}
-      <div class="tcard__rounds"><span>${t('通过回合')}</span><b class="num">${p.roundsPassed}</b></div>
+      <div class="tcard__rounds"><span>${progress ? t('到达') : t('通过回合')}</span><b class=${progress ? 'endless-progress' : 'num'}>${progress ?? p.roundsPassed}</b></div>
     </div>
     <div class="tcard__plate">
       <${Sprite} k=${plateArt(p, self)} class="tcard__platebg" />
@@ -553,6 +558,7 @@ function TeamCard({ p, i, gd, self, victory, raw }) {
 
 function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDetail, version = null }) {
   const rounds = useCountUp(r.roundsPassed, { ms: 900, delay: 450 });
+  const progress = endlessProgressText(r.endless);
   const backRef = useRef(null);
   const rawOf = (pid) => (Array.isArray(res?.players) ? res.players.find((x) => x && x.playerId === pid) : null) || null;
   const self = r.players.find((p) => p.playerId === myId) || null;
@@ -577,7 +583,7 @@ function TeamPage({ r, res, gd, myId, at: when, content, backLabel, onBack, onDe
         </span>
         <${SettleTitle} as="b" class="steam__title">${r.victory ? t('模拟完成') : t('模拟中断')}</${SettleTitle}>
       </div>
-      <div class="steam__rounds"><span>${t('同盟通过回合')}</span><b class="num">${rounds}</b></div>
+      <div class="steam__rounds"><span>${progress ? t('到达') : t('同盟通过回合')}</span><b class=${progress ? 'endless-progress' : 'num'}>${progress ?? rounds}</b></div>
       <div class="steam__when">
         <span class="steam__row"><${Sprite} k="settle/date_time_bg" class="steam__rowbg" /><${Sprite} k="settle/time_icon" class="steam__ico" />${fmtDuration(r.durationMs)}</span>
         <span class="steam__row"><${Sprite} k="settle/date_time_bg" class="steam__rowbg" /><${Sprite} k="settle/date_icon" class="steam__ico" />${fmtDate(when)}</span>

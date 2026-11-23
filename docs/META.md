@@ -217,6 +217,13 @@ otherwise every "之后 / 后续的每场作战" card — e.g. 教鞭's 法术�
 "之后的每场作战"). The 战术特训 cards are what the 教鞭 Art offers (§2.5).
 A `choice:<effectId>` registry handler overrides the default application (§2.4).
 
+### 无尽续关
+
+`MatchEndless` 在首循环收集末段普通波次的计数基准。续关时，同一 `GameData` 保存前后两轮的战斗倍率，
+`buildNormalWave` 的结果经 `scaleEndlessWave` 补充增援。休整预览和战斗都使用这份波次，玩家悬赏仍由原波次的动作安排。
+`PlayerRound.startRound` 使用 `GameData.income`，第 2 循环起改用基础收入上限。`completeCycle` 在投票前记录同盟和个人
+实际通关成绩，`finish` 在续关战败时用已通关成绩结算。`m.result` 中的最后到达进度独立于通关奖励。规则见设计 §37.240。
+
 ### 1.3 Disconnects, AI takeover
 * Local multi-window recovery (#431, DESIGN §28.27) sends optional `hello.noReplace` for a tentative shared token,
   and `hello.claimAt` for a previously welcomed token. Before binding a different socket, the server rejects a

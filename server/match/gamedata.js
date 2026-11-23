@@ -103,6 +103,7 @@ export class GameData {
    */
   constructor(data, modeId, startCount = 0) {
     this.endlessEnemyMultiplier = 1;
+    this.previousEndlessEnemyMultiplier = 1;
     this.startCount = Math.max(0, Math.min(MAX_SEATS, Math.floor(Number(startCount) || 0)));
     this.raw = data && typeof data === 'object' ? data : {};
     this.config = getConfig(this.raw) || {};
@@ -263,6 +264,7 @@ export class GameData {
   income(round) {
     const arr = Array.isArray(this.economy.income) ? this.economy.income : DEFAULTS.income;
     const cap = numOr(this.economy.incomeCap, DEFAULTS.incomeCap);
+    if (this.endlessEnemyMultiplier > 1) return Math.max(0, cap);
     const v = arr[round];
     if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
     return Math.max(0, Math.min(cap, 3 + round));
@@ -470,7 +472,21 @@ export class GameData {
   enemyScale(r) {
     const scale = this.baseEnemyScale(r);
     const mul = this.endlessEnemyMultiplier;
-    return mul === 1 ? scale : { ...scale, hpMul: scale.hpMul * mul, atkMul: scale.atkMul * mul };
+    if (mul === 1) return scale;
+    const hpMul = scale.hpMul * mul;
+    const atkMul = scale.atkMul * mul;
+    const last = this.bossRound - 1;
+    if (r < 1 || r > last || r === this.hiddenRound) return { ...scale, hpMul, atkMul };
+
+    // [ASSUMED] Ordinary endless rounds ramp from the midpoint of the two cycle multipliers to the new one.
+    const progress = (r - 1) / Math.max(1, last - 1);
+    const previous = this.previousEndlessEnemyMultiplier;
+    const floor = previous + (mul - previous) * (1 + progress) / 2;
+    const tail = this.baseEnemyScale(last);
+    const hp = Math.max(hpMul, tail.hpMul * floor);
+    const hitCountHp = Math.max(hpMul / (scale.supplyHpMul ?? 1), tail.hpMul * floor / (tail.supplyHpMul ?? 1));
+    return { hpMul: hp, atkMul: Math.max(atkMul, tail.atkMul * floor), speedMul: scale.speedMul,
+      ...(hp !== hitCountHp ? { supplyHpMul: hp / hitCountHp } : {}) };
   }
 
   timer(key) {

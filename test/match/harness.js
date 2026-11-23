@@ -90,6 +90,7 @@ export function makeMatch(o = {}) {
     verify: o.verify ?? 'off',
     headlessSliceMs: o.headlessSliceMs,
     aiPicksLast: o.aiPicksLast,
+    endless: o.endless,
     // a bot prep's layout rehearsal delegated to the room's host (DESIGN §14; test/match/rehearsal-delegate.test.js):
     // `hostId` is the executor a task is sent to, `botRehearsalDelegateMs` its answer window
     hostId: o.hostId !== undefined ? o.hostId : (o.test === true ? (seats.find((s) => s && !s.isBot)?.playerId ?? null) : undefined),
@@ -162,8 +163,8 @@ export function makeMatch(o = {}) {
           m.handle(ps.playerId, { t: 'g.diyBring', slots });
         }
         if (m.phase === 'SP_DRAFT' && m.spTurn() === ps.playerId) {
-          const idx = m.sp.cards.map((c) => c.idx).find((k) => m.sp.taken[k] == null);
-          if (idx != null) m.handle(ps.playerId, { t: 'g.choice', idx });
+          const card = m.sp.cards.find((c) => m.spCardAvailable(c));
+          if (card) m.handle(ps.playerId, { t: 'g.choice', idx: card.idx });
         }
         if (ready && m.phase === 'PREP' && ps.alive && !ps.ready) {
           if (ps.personalChoice) m.handle(ps.playerId, { t: 'g.choice', idx: 0, choiceId: ps.personalChoice.id });

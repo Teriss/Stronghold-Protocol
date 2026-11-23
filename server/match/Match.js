@@ -351,6 +351,10 @@ export class Match {
     this.endlessCycle = 1;
     this.endlessCleared = 0;
     this.endlessVote = null;
+    this.endlessTailCount = 0;
+    this.endlessBestClear = null;
+    this.endlessPlayerClears = this.endless ? new Map() : null;
+    this.endlessProgress = this.endless ? new Map() : null;
     this.ownsScheduler = !opts.scheduler;
     this.sched = opts.scheduler || new RealScheduler({ now: opts.now || Date.now, onError: (e) => this.reportError('timer', e) });
     this.registry = opts.registry || getDefaultRegistry();

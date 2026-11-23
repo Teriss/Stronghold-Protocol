@@ -93,6 +93,7 @@ export class MatchPlatform {
     }
     ps._botPrepToken = (ps._botPrepToken || 0) + 1;
     this.cancelSeatRehearsal(botId);
+    this.endlessPlayerClears?.delete(botId);
     Object.assign(ps, { isBot: false, autoplay: false, connected: true, ready: false, name });
     this.loneHuman = this.order.filter((p) => !p.isBot && !p.left).length === 1;
     ps.aiTakeoverRound = this.round;
