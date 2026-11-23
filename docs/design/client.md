@@ -48,6 +48,7 @@ The server validates and builds a vanilla BattleSpec using match wave/placement 
 field view run it without rooms or result submissions. Editing resets to tick zero, runs start paused, stepping is
 one or thirty fixed ticks, speed is 0.25×–8×, and a hidden tab pauses. JSON saves the setup and seed; the last valid
 setup persists in this browser. Official/prep effects outside that single battle are named as unsupported.
+
 A full match is a separate host test room (history §34.8): the sandbox does not open one and does not send `g.test`.
 The lobby only offers creation when `welcome.testMode` is true. Joining/watching requires a test acknowledgement;
 recent room chips, room/briefing headers, HUD/watch views and settlement keep the test mark. The host dock sends
@@ -59,6 +60,16 @@ caller's simulation clock, allowing exact pauses/steps in the console. Ordinary 
 wall-clock/interpolation timing. Official effects still follow the snapshot clock; the console observes only its
 own renderer's loaded instances/procedural calls. These diagnostic counts depend on assets and rendering, never
 participate in simulation results, and are distinct from damage/heal totals. Match test commands are not part of this page.
+
+**Lobby test scene (0.4.0, §37.241).** The lobby's 测试场景 link opens an independent page for everyone. It uses the
+default 盟约 data, starts with an empty 战场#01, and offers the active normal stages. Operators and equippable items
+enter the shared 整备区. A player places operators on valid deployment tiles, equips them within their normal
+capacity, and places enemies on tiles from which their movement type can reach the goal. The stage starts its
+usual devices. [ASSUMED] This single-battle editor uses default loadouts, one piece per tile, seed 1 and a 240 s cap.
+Shop, merging, bond activation and the effects of equipment consumed during preparation belong to the match.
+The existing simulation's snapshots and events render locally. Stop and returning from a finished battle restore
+the editor's setup. Changing maps discards it immediately, including any pieces on the bench. Leaving the page
+discards the session. There is no room, reward or match record for the exercise.
 
 Bond-layer audio (#482): live own preparation gains arrive as `m.layer`; the displayed battle's `layer` tuples
 play the same `bondUp` cue. A gain of several layers plays once, including gains to inactive bonds. The official

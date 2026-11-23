@@ -187,6 +187,7 @@ so old imports keep working: `public/js/ui/gameLogic.js` (`public/js/ui/gameLogi
 | `public/studio/` | the plugin studio's page (`/studio/`, local network only): `index.html`, `studio.css`; `public/studio/js/main.js` the shell, `api.js` keyed requests, `create.js` / `picker.js` creation, `slots.js` / `info.js` / `issues.js` editing and findings, `labels.js` display names |
 | `public/studio/js/` (gameplay and import) | `authoring.js` / `validateDraft.js` wizard saves and validation; `editors/` template forms (including `dslForm.js` and shared `controls.js`); `trial.js` trial controls; `preview/` the game's cards, field and sound plus `replay.js` / `layers.js`; `forge.js` and `catalog.js` import/install flows |
 | `public/studio/console.html`, `public/studio/js/console/` | test console page: `main.js` key/JSON/persistence, `editor.js` scenario controls, `view.js` real sim/field host, `runtime.js` fixed-tick driving and bounded inspector/effect logs |
+| `public/test-scene.html`, `public/js/screens/testScene.js` | the public lobby test scene. The editor's prep state converts to a local BattleSpec in `battle/testSceneModel.js`. The field view consumes snapshots and events via `battle/localPlayback.js`, which the Studio console also uses. |
 | `public/js/ui/pluginSettings.js`, `public/js/ui/numberInput.js`, `public/js/ui/uiPlugins.js`, `public/js/ui/pluginFrame.js` | room settings controls, decimal input, personal UI switches and the sandboxed frame host |
 
 ### Data, tools, tests

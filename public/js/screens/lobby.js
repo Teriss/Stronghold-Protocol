@@ -905,6 +905,9 @@ export function LobbyScreen() {
       <aside class="hub-right">
         <${SweepPlate} onClick=${() => setSweepOpen(true)} />
         <${LoadoutButton} from="lobby" size="lg" class="hub-plate hub-plate--loadout lobby-loadout" label=${t('干员调配')} />
+        <a class="btn btn--secondary btn--lg hub-plate" href="/test-scene.html" data-testid="test-scene-entry">
+          <${Icon} name="sword" class="btn__icon" /><span class="btn__label">${t('测试场景')}</span>
+        </a>
         <${AchievementPlate} onOpen=${() => setAchOpen(true)} />
       </aside>
       <section class="hub-entries" aria-label=${t('模拟方式')}>
