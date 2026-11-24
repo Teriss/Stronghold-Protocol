@@ -233,14 +233,14 @@ export function seedAssets(store) {
 /**
  * Create a field view in `host`: the render engine when available, else the DOM fallback.
  * @param {HTMLElement} host
- * @param {{ signal?: AbortSignal }} [options] Cancels a pending mount without creating a fallback.
+ * @param {{ signal?: AbortSignal, hud?: any, padding?: any }} [options] Cancels a pending mount without creating a fallback.
  * @returns {Promise<ReturnType<typeof guardView>>}
  */
-export async function mountFieldView(host, { signal } = {}) {
+export async function mountFieldView(host, { signal, hud = hudBands, padding = hudPadding } = {}) {
   checkActive(signal);
   const pref = renderPref();
   let fallbackReason = 'explicit';
-  const opts = { data, assets: data.get('assets'), audio, settings: settingsStore.get(), padding: hudPadding, hud: hudBands };
+  const opts = { data, assets: data.get('assets'), audio, settings: settingsStore.get(), padding, hud };
   if (pref !== 'fallback') {
     const controller = new AbortController();
     const onAbort = () => controller.abort(abortError(signal));

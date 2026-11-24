@@ -8,11 +8,12 @@ const SELECT = '[data-testid="test-scene-stage"]';
 const START = '[data-testid="test-scene-start"]';
 const STOP = '[data-testid="test-scene-stop"]';
 const EDITOR = '[data-testid="test-scene-editor"]';
+const COMBAT = '[data-testid="test-scene-combat"]';
 const chess = 'chess_char_1_02_a';
 const item = 'chess_item_1_01_e_a';
 const enemy = 'enemy_1000_gopro_2';
 
-test('public test scene enters from the lobby, fights locally, stops, and resets on a map change',
+test('public test scene enters from the lobby, edits in-scene, fights locally, stops, and resets on a map change',
   { skip: !ENABLED && 'set SP_E2E=1 (Chrome)', timeout: 90000 }, async () => {
     const server = await startRealServer();
     const puppeteer = (await import('puppeteer-core')).default;
@@ -27,10 +28,19 @@ test('public test scene enters from the lobby, fights locally, stops, and resets
       const entry = '[data-testid="test-scene-entry"]';
       await page.waitForSelector(entry, { visible: true });
       await Promise.all([page.waitForNavigation(), page.click(entry)]);
-      await page.waitForSelector(EDITOR);
+      await page.waitForSelector(`${EDITOR} .ff-tile[data-row="10"][data-col="4"]`);
       assert.equal(await page.$eval(SELECT, el => el.value), 'act1autochess_m01');
       assert.equal(await page.$eval(SELECT, el => el.options.length), 8);
       assert.equal(await page.$eval(START, el => el.disabled), true);
+
+      // Sidebar and live scene must sit side-by-side without overlapping.
+      const layout = await page.evaluate(() => {
+        const side = document.querySelector('.ts-sidebar').getBoundingClientRect();
+        const stage = document.querySelector('.ts-stage').getBoundingClientRect();
+        return { sideRight: side.right, stageLeft: stage.left, stageW: stage.width, stageH: stage.height };
+      });
+      assert.ok(layout.sideRight <= layout.stageLeft + 1, `sidebar overlapped stage: ${JSON.stringify(layout)}`);
+      assert.ok(layout.stageW > 600 && layout.stageH > 400);
 
       const pick = async (kind, id) => {
         await page.click(`.ts-kinds [data-kind="${kind}"]`);
@@ -39,28 +49,29 @@ test('public test scene enters from the lobby, fights locally, stops, and resets
         await page.keyboard.type(id);
         await page.click(`.ts-pick[data-record="${id}"]`);
       };
-      const tile = (row, col) => `.ts-cell[data-row="${row}"][data-col="${col}"]`;
+      const tile = (row, col) => `.ff-tile[data-row="${row}"][data-col="${col}"]`;
       await pick('chess', chess);
+      await page.waitForSelector(`.ff-piece[data-area="hand"][data-piece="${chess}"]`);
       await pick('item', item);
-      await page.click(`.ts-slot[data-piece="${chess}"]`);
+      await page.click(`.ff-piece[data-area="hand"][data-piece="${chess}"]`);
       await page.waitForSelector(`[data-equipped="${item}"]`);
       await page.click(tile(9, 2));
       await page.waitForSelector('.ts-error');
       await page.click(tile(10, 4));
-      await page.waitForSelector(`${tile(10, 4)}[data-piece="${chess}"]`);
+      await page.waitForSelector(`.ff-piece[data-area="board"][data-piece="${chess}"][data-row="10"][data-col="4"]`);
       await pick('item', item);
-      await page.click(tile(10, 4));
+      await page.click(`.ff-piece[data-area="board"][data-piece="${chess}"][data-row="10"][data-col="4"]`);
       assert.equal(await page.$$eval(`[data-equipped="${item}"]`, els => els.length), 2);
       await pick('enemy', enemy);
       await page.click(tile(9, 8));
-      await page.waitForSelector(`${tile(9, 8)}[data-piece="${enemy}"]`);
+      await page.waitForSelector(`.ff-piece--map-char[data-piece="${enemy}"][data-row="9"][data-col="8"]`);
       await page.click(tile(9, 9));
-      await page.waitForSelector(`${tile(9, 9)}[data-piece="${enemy}"]`);
+      await page.waitForSelector(`.ff-piece--map-char[data-piece="${enemy}"][data-row="9"][data-col="9"]`);
       await page.click('.ts-hint button');
-      await page.click(tile(9, 9));
-      await page.waitForSelector('[data-testid="test-scene-selection"] button');
+      await page.click(`.ff-piece--map-char[data-piece="${enemy}"][data-row="9"][data-col="9"]`);
+      await page.waitForSelector('[data-testid="test-scene-selection"] .ts-selection__actions button');
       await page.click('[data-testid="test-scene-selection"] .ts-selection__actions button');
-      assert.equal(await page.$(`${tile(9, 9)}[data-piece]`), null);
+      await page.waitForFunction(() => !document.querySelector('.ff-piece--map-char[data-row="9"][data-col="9"]'));
 
       for (let i = 0; i < 10; i++) await pick('chess', chess);
       assert.equal(await page.$eval('[data-testid="test-scene-hand-count"]', el => el.textContent.trim()), '10 / 10');
@@ -72,13 +83,13 @@ test('public test scene enters from the lobby, fights locally, stops, and resets
       const running = () => page.waitForFunction(() => Number(document.querySelector('[data-testid="test-scene-time"]')?.dataset.time) >= 0.2);
       await page.click(START);
       await running();
-      await page.waitForSelector('.ts-combat__field[data-renderer="fallback"] .ff-unit.is-enemy');
+      await page.waitForSelector(`${COMBAT} .ts-field[data-renderer="fallback"] .ff-unit.is-enemy`);
       assert.equal(await page.$(EDITOR), null);
       await page.click(STOP);
       await page.waitForSelector(EDITOR);
-      assert.equal(await page.$$eval('.ts-cell[data-piece]', els => els.length), 2);
-      assert.equal(await page.$$eval('.ts-slot[data-piece]', els => els.length), 10);
-      await page.click(tile(10, 4));
+      assert.equal(await page.$$eval('.ff-piece[data-area="board"], .ff-piece--map-char', els => els.length), 2);
+      assert.equal(await page.$$eval('.ff-piece[data-area="hand"]', els => els.length), 10);
+      await page.click(`.ff-piece[data-area="board"][data-piece="${chess}"][data-row="10"][data-col="4"]`);
       assert.equal(await page.$$eval(`[data-equipped="${item}"]`, els => els.length), 2);
 
       await page.click(START);
@@ -87,8 +98,8 @@ test('public test scene enters from the lobby, fights locally, stops, and resets
       await page.waitForSelector(EDITOR);
       assert.equal(await page.$eval(SELECT, el => el.value), 'act1autochess_m02');
       assert.equal(await page.$eval(START, el => el.disabled), true);
-      assert.equal(await page.$$eval('.ts-cell[data-piece], .ts-slot[data-piece], [data-equipped]', els => els.length), 0);
-      assert.equal(await page.$('.ts-combat'), null);
+      assert.equal(await page.$$eval('.ff-piece, [data-equipped]', els => els.length), 0);
+      assert.equal(await page.$(COMBAT), null);
       await pick('enemy', enemy);
       await page.click(tile(9, 3));
       await page.click(START);
@@ -96,7 +107,23 @@ test('public test scene enters from the lobby, fights locally, stops, and resets
       assert.match(await page.$eval('[data-testid="test-scene-result"]', el => el.textContent), /已结束/);
       assert.equal(await page.$eval(STOP, el => el.textContent.trim()), '返回布置');
       await page.click(STOP);
-      await page.waitForSelector('.ts-cell[data-side="enemy"]');
+      await page.waitForSelector(`.ff-piece--map-char[data-piece="${enemy}"][data-row="9"][data-col="3"]`);
+
+      // Verify DIY operators (e.g. 赤刃明霄陈) can be searched, added, deployed and simulated in-scene.
+      await page.click('.ts-kinds [data-kind="chess"]');
+      const diySearch = await page.$('.ts-search');
+      await diySearch.click({ clickCount: 3 });
+      await page.keyboard.type('赤刃明霄陈');
+      const chenBtn = '.ts-pick[data-char="char_1050_chen3"]';
+      await page.waitForSelector(chenBtn);
+      await page.click(chenBtn);
+      await page.waitForSelector('.ff-piece[data-area="hand"][data-char="char_1050_chen3"]');
+      await page.click(tile(10, 4));
+      await page.waitForSelector('.ff-piece[data-area="board"][data-char="char_1050_chen3"][data-row="10"][data-col="4"]');
+      await page.click(START);
+      await running();
+      await page.click(STOP);
+      await page.waitForSelector('.ff-piece[data-area="board"][data-char="char_1050_chen3"][data-row="10"][data-col="4"]');
       assert.deepEqual(client.problems.filter(line => line.startsWith('pageerror:')), []);
 
       await Promise.all([page.waitForNavigation(), page.click('.ts-header a')]);
@@ -136,7 +163,7 @@ test('a test scene with missing data can retry in place and runs simplified rend
       await page.waitForSelector('.ts-boot [role="alert"]');
       unavailable = false;
       await page.click('.ts-boot button');
-      await page.waitForSelector(EDITOR);
+      await page.waitForSelector(`${EDITOR} .ff-tile[data-row="9"][data-col="8"]`);
       assert.equal(await page.$eval(SELECT, el => el.value), 'act1autochess_m01');
       await page.waitForSelector('.ts-pick .ts-portrait svg');
       await page.click('.ts-kinds [data-kind="enemy"]');
@@ -144,9 +171,9 @@ test('a test scene with missing data can retry in place and runs simplified rend
       await search.click({ clickCount: 3 });
       await page.keyboard.type(enemy);
       await page.click(`.ts-pick[data-record="${enemy}"]`);
-      await page.click('.ts-cell[data-row="9"][data-col="8"]');
+      await page.click('.ff-tile[data-row="9"][data-col="8"]');
       await page.click(START);
-      await page.waitForSelector('.ts-combat__field[data-renderer="fallback"] .ff-unit.is-enemy');
+      await page.waitForSelector('.ts-field[data-renderer="fallback"] .ff-unit.is-enemy');
       await page.waitForFunction(() => Number(document.querySelector('[data-testid="test-scene-time"]')?.dataset.time) >= 0.2);
       assert.deepEqual(client.problems.filter(line => line.startsWith('pageerror:')), []);
     } finally {

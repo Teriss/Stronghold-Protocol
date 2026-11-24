@@ -25,7 +25,7 @@ import { render } from '../../vendor/preact.module.js';
 import { html, TierChip } from './components.js';
 import { GEO } from '../../../shared/constants.js';
 import { chessAvatarUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl } from './assetUrls.js';
-import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile, ownStandIn, ownDiyRecord } from './gameLogic.js';
+import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile, ownStandIn, ownDiyRecord, diyRecordFor } from './gameLogic.js';
 import { t } from '../../../shared/i18n.js';
 import { ownerSkin } from './skins.js';
 
@@ -172,9 +172,10 @@ export function createFallbackView(host, opts = {}) {
     }
     const chess = lookup('chess', p.id);
     const body = ownSi(chess) || ownDiy(chess) || chess;
-    const skin = ownerSkin(body?.charId, { ownerId: st.priv?.playerId ?? st.myId, skin: p.skin,
+    const resolved = pieceDiy(p, chess) || body;
+    const skin = ownerSkin(resolved?.charId, { ownerId: st.priv?.playerId ?? st.myId, skin: p.skin,
       myId: st.myId, players: st.players, otherSkins: st.settings.otherSkins });
-    return chessAvatarUrl(mm, body, { skin });
+    return chessAvatarUrl(mm, resolved, { skin });
   }
   /** 0.2.0 补位: the player's own piece of a chess it does not own is its stand-in, bench and board alike (render/app.js pieceInfo) */
   function ownSi(chess) {
@@ -184,22 +185,29 @@ export function createFallbackView(host, opts = {}) {
   function ownDiy(chess) {
     return chess ? ownDiyRecord(chess, st.priv, { chess: dataStore?.get?.('chess') ?? null, backups: dataStore?.get?.('backups') ?? null }) : null;
   }
+  function pieceDiy(p, chess) {
+    return p?.diy && chess?.isDiy
+      ? diyRecordFor(chess, p.diy, { chess: dataStore?.get?.('chess') ?? null, backups: dataStore?.get?.('backups') ?? null })
+      : null;
+  }
   function pieceName(p) {
     if (p.kind === 'item') return lookup('items', p.id)?.name || t('道具');
     if (p.kind === 'token') return lookup('tokens', p.id)?.name || t('召唤物');
     const chess = lookup('chess', p.id);
+    const custom = pieceDiy(p, chess);
+    if (custom?.name) return custom.name;
     return (ownSi(chess) || ownDiy(chess) || chess)?.name || t('干员');
   }
 
   function Piece({ p, x, y, L, area }) {
     const src = pieceArt(p);
     const dragging = st.drag?.uid === p.uid && st.drag.moved;
-    const golden = !!p.golden;
+    const golden = !!(p.golden || lookup('chess', p.id)?.isGolden);
     const tier = p.tier || lookup('chess', p.id)?.tier || lookup('items', p.id)?.tier;
     const dir = st.dirs.get(p.uid) || (typeof p.dir === 'string' ? p.dir.toUpperCase() : 'RIGHT');
     const wedge = (area === 'board' || st.held.has(p.uid)) && p.kind !== 'item';
     return html`<div class=${cx('ff-piece', `ff-piece--${p.kind}`, golden && 'is-golden', dragging && 'is-lifted', st.editable && 'is-draggable', area === 'temp' && 'is-temp', wedge && `ff-dir--${dir.toLowerCase()}`)}
-        data-uid=${p.uid} style=${`transform:translate(${x}px,${y}px);width:${L.tile}px;height:${L.tile}px`}
+        data-uid=${p.uid} data-piece=${p.id} data-char=${p.diy?.charId} data-area=${area} data-row=${p.row} data-col=${p.col} style=${`transform:translate(${x}px,${y}px);width:${L.tile}px;height:${L.tile}px`}
         onPointerDown=${(e) => onDown(e, p)} onContextMenu=${(e) => { e.preventDefault(); emit('pieceClick', { uid: p.uid, button: 2, clientX: e.clientX, clientY: e.clientY }); }}
         onPointerEnter=${() => emit('pieceHover', { uid: p.uid })} onPointerLeave=${() => emit('pieceHover', { uid: null })}
         title=${pieceName(p)}>
@@ -396,6 +404,7 @@ export function createFallbackView(host, opts = {}) {
         const pos = tilePos(L, u.y, u.x);
         const src = (u.kind === 'enemy' || String(u.defId).startsWith('enemy_')) ? enemyIconUrl(m(), u.defId) : tokenAvatarUrl(m(), u.defId);
         pieces.push(html`<div key=${`map:${u.uid}`} class="ff-piece ff-piece--token ff-piece--map-char"
+            data-uid=${u.uid} data-piece=${u.defId} data-side=${u.side || u.kind || 'enemy'} data-row=${u.y} data-col=${u.x}
             style=${`transform:translate(${pos.x}px,${pos.y}px);width:${L.tile}px;height:${L.tile}px`}
             onPointerDown=${(e) => { if (e.button === 0) emit('pieceClick', { unit: u, unitId: null, uid: u.uid, prepMapChar: true, button: 0, clientX: e.clientX, clientY: e.clientY }); }}
             onContextMenu=${(e) => { e.preventDefault(); emit('pieceClick', { unit: u, unitId: null, uid: u.uid, prepMapChar: true, button: 2, detail: true, clientX: e.clientX, clientY: e.clientY }); }}

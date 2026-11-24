@@ -822,7 +822,8 @@ export async function createFieldView(host, options = {}) {
     const si = chess && standInList.includes(chess.baseId || chess.chessId) ? data.standIn(piece.id) : null;
     // 0.2.0 自选编队: a DIY slot the player filled is its operator, on the board and on the bench alike
     const pick = chess && chess.isDiy ? diyPicks[chess.baseId || chess.chessId] : null;
-    const dr = pick ? data.diy(piece.id, pick) : null;
+    const activePick = chess && chess.isDiy && piece.diy && typeof piece.diy === 'object' ? piece.diy : pick;
+    const dr = activePick ? data.diy(piece.id, activePick) : null;
     const rec = si || dr || chess;
     return {
       kind: 'op', side: 'ally', defId: piece.id,
@@ -834,7 +835,7 @@ export async function createFieldView(host, options = {}) {
       // board already saw the skin: the own pieces are all this player's, so no 设置「显示其他玩家的皮肤」 applies here.
       skin: piece.skin || null,
       ...(si ? { standInFor: si.standInFor } : null),
-      ...(dr ? { diy: { charId: pick.charId, skillIndex: pick.skillIndex ?? null, uniEquipId: pick.uniEquipId ?? null } } : null),
+      ...(dr ? { diy: { charId: activePick.charId, skillIndex: activePick.skillIndex ?? null, uniEquipId: activePick.uniEquipId ?? null } } : null),
     };
   }
 

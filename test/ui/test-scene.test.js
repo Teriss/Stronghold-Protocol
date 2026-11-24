@@ -5,7 +5,7 @@ import * as spec from '../../server/sim/spec.js';
 import { DataSource } from '../../server/sim/simdata.js';
 import { GEO } from '../../shared/constants.js';
 import { makeRunner } from '../../public/js/battle/localPlayback.js';
-import { BATTLE_CAP, DEFAULT_STAGE, editScene, emptyScene, hasCombatants, sceneSpec, sceneStages, sceneTerrain } from '../../public/js/battle/testSceneModel.js';
+import { BATTLE_CAP, DEFAULT_STAGE, canPlaceInScene, chessRecordOf, editScene, emptyScene, hasCombatants, legalTilesFor, prepViewState, sceneOperators, sceneSpec, sceneStages, sceneTerrain } from '../../public/js/battle/testSceneModel.js';
 
 const raw = loadData();
 const sim = { raw, ds: new DataSource(raw, null), spec };
@@ -138,4 +138,91 @@ test('single-side scenes run enemy routes to completion and cap operator-only sc
   assert.equal(opBattle.finished, true);
   assert.equal(opBattle.reason, 'timeout');
   assert.ok(Math.abs(opBattle.time - BATTLE_CAP) < 1e-6);
+});
+
+test('in-scene helpers build prepMapChars, validate drag targets, reorder bench and highlight legal tiles', () => {
+  let scene = emptyScene();
+  scene = edit(scene, { type: 'add', kind: 'chess', id: chess });
+  scene = edit(scene, { type: 'add', kind: 'item', id: equipment });
+  assert.equal(canPlaceInScene(scene, 1, { area: 'board', row: 10, col: 4 }, context), true);
+  assert.equal(canPlaceInScene(scene, 1, { area: 'board', row: 9, col: 2 }, context), false);
+  assert.equal(canPlaceInScene(scene, 2, { area: 'hand', idx: 0 }, context), true);
+  scene = edit(scene, { type: 'moveHand', uid: 2, idx: 4 });
+  assert.equal(scene.hand[4]?.uid, 2);
+  assert.equal(scene.hand[1], null);
+
+  scene = edit(scene, { type: 'deploy', uid: 1, row: 10, col: 4, dir: 'DOWN' });
+  assert.equal(scene.board[0].dir, 'DOWN');
+  assert.equal(canPlaceInScene(scene, 1, { area: 'board', row: 10, col: 4 }, context), true);
+  assert.equal(canPlaceInScene(scene, 2, { area: 'board', row: 10, col: 4 }, context), true);
+  assert.deepEqual(legalTilesFor(scene, { uid: 2 }, context), [[10, 4]]);
+
+  scene = edit(scene, { type: 'enemy', id: walker, row: 9, col: 8 });
+  const enemyTiles = legalTilesFor(scene, { enemy: walker }, context);
+  assert.ok(enemyTiles.some(([r, c]) => r === 9 && c === 9));
+  assert.ok(!enemyTiles.some(([r, c]) => r === 9 && c === 8));
+  assert.ok(!enemyTiles.some(([r, c]) => r === 9 && c === 2));
+
+  const prep = prepViewState(scene, p => `name:${p.id}`);
+  assert.equal(prep.prepMapChars.length, 1);
+  assert.deepEqual(
+    [prep.prepMapChars[0].uid, prep.prepMapChars[0].defId, prep.prepMapChars[0].y, prep.prepMapChars[0].x, prep.prepMapChars[0].side],
+    [scene.enemies[0].uid, walker, 9, 8, 'enemy'],
+  );
+});
+
+test('catalogue includes DIY operators (normal & elite) with accurate placement, equipment rules and battle simulation', () => {
+  const ops = sceneOperators(raw);
+  const chenNormal = ops.find(op => op.charId === 'char_1050_chen3' && !op.golden);
+  const chenElite = ops.find(op => op.charId === 'char_1050_chen3' && op.golden);
+  const rangedDiy = ops.find(op => op.isDiy && !op.golden && op.rec.position === 'RANGED');
+  assert.ok(chenNormal && chenElite, '赤刃明霄陈 normal & elite are listed');
+  assert.equal(chenNormal.rec.name, '赤刃明霄陈');
+  assert.ok(rangedDiy, 'a ranged DIY operator is listed');
+  assert.equal(ops.filter(op => op.isDiy).length, 180, 'all 90 DIY operators in normal and elite forms');
+
+  const m03 = 'act1autochess_m03';
+  const m03Ctx = { sim, config: raw.config, terrain: sceneTerrain(sim, m03) };
+  const editM03 = (s, action) => {
+    const result = editScene(s, action, m03Ctx);
+    assert.ok(result.scene, result.error);
+    return result.scene;
+  };
+  const [highRow, highCol] = raw.stages[m03].deployTiles.normal.rangedOnly[0];
+  const [lowRow, lowCol] = raw.stages[m03].deployTiles.normal.melee.find(([r, c]) => !m03Ctx.terrain.reserved.has(m03Ctx.terrain.grid.key(r, c)));
+
+  let scene = emptyScene(m03);
+  scene = editM03(scene, { type: 'add', kind: 'chess', id: chenElite.id, diy: chenElite.diy });
+  scene = editM03(scene, { type: 'add', kind: 'chess', id: rangedDiy.id, diy: rangedDiy.diy });
+  assert.equal(chessRecordOf(raw, scene.hand[0])?.name, '赤刃明霄陈');
+  assert.equal(chessRecordOf(raw, scene.hand[1])?.position, 'RANGED');
+
+  // MELEE DIY (赤刃明霄陈) cannot deploy on a ranged-only high-ground tile, while RANGED DIY can.
+  assert.deepEqual(editScene(scene, { type: 'deploy', uid: 1, row: highRow, col: highCol }, m03Ctx), { error: '无法部署在该位置' });
+  scene = editM03(scene, { type: 'deploy', uid: 1, row: lowRow, col: lowCol, dir: 'RIGHT' });
+  scene = editM03(scene, { type: 'deploy', uid: 2, row: highRow, col: highCol, dir: 'RIGHT' });
+  assert.equal(canPlaceInScene(scene, 1, { area: 'board', row: highRow, col: highCol }, m03Ctx), false, 'melee DIY cannot swap onto high ground');
+
+  // Items that forbid DIY operators are refused on DIY pieces.
+  const noDiyItem = Object.keys(raw.items).find(id => raw.items[id]?.noDiy && raw.items[id]?.itemType === 'EQUIP' && !raw.items[id]?.kind?.startsWith('consume_on_equip'));
+  if (noDiyItem) {
+    scene = editM03(scene, { type: 'add', kind: 'item', id: noDiyItem });
+    const itemUid = scene.hand.find(p => p?.id === noDiyItem).uid;
+    assert.deepEqual(editScene(scene, { type: 'equip', uid: itemUid, target: 1 }, m03Ctx), { error: '无法装备给自选干员' });
+    assert.equal(canPlaceInScene(scene, itemUid, { area: 'board', row: lowRow, col: lowCol }, m03Ctx), false);
+    assert.deepEqual(legalTilesFor(scene, { uid: itemUid }, m03Ctx), []);
+  }
+
+  // Regular equipment equips normally and both distinct DIY operators simulate cleanly together.
+  scene = editM03(scene, { type: 'add', kind: 'item', id: equipment });
+  const eqUid = scene.hand.find(p => p?.id === equipment).uid;
+  scene = editM03(scene, { type: 'equip', uid: eqUid, target: 1 });
+  const enemyTile = legalTilesFor(scene, { enemy: walker }, m03Ctx)[0];
+  scene = editM03(scene, { type: 'enemy', id: walker, row: enemyTile[0], col: enemyTile[1] });
+
+  const battle = spec.createBattleFromSpec(sceneSpec(sim, scene, m03Ctx.terrain.goal), sim.ds, { quiet: true });
+  for (let i = 0; i < 60; i++) battle.step();
+  assert.deepEqual(battle.errors, []);
+  const allyChars = battle.allyUnits.filter(u => u.kind === 'op').map(u => u.def.charId).sort();
+  assert.deepEqual(allyChars, ['char_1050_chen3', rangedDiy.charId].sort());
 });
