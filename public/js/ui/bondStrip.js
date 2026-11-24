@@ -153,10 +153,10 @@ function BondScroller({ count, children }) {
 }
 
 /**
- * @param {{ bonds: any[], layersDisabled?: boolean, onOpen:(bondId:string)=>void, openId?: string|null,
- *   owner?: string|null }} props — owner: the watched teammate's name (null = your own bonds)
+ * @param {{ bonds: any[], layersDisabled?: boolean, onOpen:(bondId:string)=>void, onDblClick?:((bondId:string, entry:any, e:MouseEvent)=>void)|null,
+ *   openId?: string|null, owner?: string|null }} props — owner: the watched teammate's name (null = your own bonds)
  */
-export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null, owner = null }) {
+export function BondStrip({ bonds, layersDisabled = false, onOpen, onDblClick = null, openId = null, owner = null }) {
   // A zero-count mapped row exists so the popup can resolve it. It is not a strip icon.
   const sorted = sortBonds(bonds, (id) => data.lookup('bonds', id))
     .filter((b) => b.off ? b.count > 0 : b.active || b.count > 0 || b.layers > 0);
@@ -187,7 +187,8 @@ export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null
       const next = nextThreshold(b.count ?? 0, th);
       const tier = b.effectId ? bondTier(b.count ?? 0, th, rec?.maxCount) : b.tier ?? 0;
       return html`<div key=${b.bondId} role="listitem" data-bond=${b.bondId} data-harmony=${b.harmony > 0 ? b.harmony : null}
-          class=${cx('bslot', b.active && 'is-active', openId === b.bondId && 'is-open')}>
+          class=${cx('bslot', b.active && 'is-active', openId === b.bondId && 'is-open')}
+          onDblClick=${onDblClick ? (e) => onDblClick(b.bondId, b, e) : undefined}>
         <${BondDisc} name=${rec?.name || b.bondId} icon=${bondIconUrl(m, b.bondId)} layers=${rec?.noStack ? undefined : b.layers ?? 0}
           tier=${tier} maxTier=${Math.max(1, th.length)} active=${!!b.active} size="sm" showName=${true}
           layersDisabled=${layersDisabled} onClick=${() => onOpen(b.bondId)}

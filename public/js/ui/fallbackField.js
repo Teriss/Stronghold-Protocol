@@ -105,7 +105,7 @@ export function fallbackFloat(e, settings) {
  */
 export function createFallbackView(host, opts = {}) {
   const dataStore = opts.data;
-  const equipHand = () => dataStore?.get?.('config')?.version?.rules?.equipHand === true;
+  const equipHand = () => st.priv?.equipHand === true || dataStore?.get?.('config')?.version?.rules?.equipHand === true;
   const m = () => opts.assets || dataStore?.get?.('assets') || null;
   const lookup = (file, id) => dataStore?.lookup?.(file, id) ?? null;
   const listeners = new Map();

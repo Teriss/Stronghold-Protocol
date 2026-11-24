@@ -807,7 +807,8 @@ export function resolveDetail(target, pieces, { priv = null, backups = data.get(
     if (p.kind === 'item') { const it = data.lookup('items', p.id); return it ? { type: 'item', item: it, piece: p } : null; }
     if (p.kind === 'token') { const t = data.lookup('tokens', p.id) || diyToken(p.id); return t ? { type: 'token', token: t, piece: p, ownerId: tokenOwnerId(p, pieces), skin: p.skin || null } : null; }
     const c = data.lookup('chess', p.id);
-    const d = ownDiy(c);
+    const pieceDiy = p.diy && c?.isDiy ? diyRecordFor(c, p.diy, dd) : null;
+    const d = pieceDiy ? { chess: pieceDiy, diy: p.diy } : ownDiy(c);
     if (d) return { type: 'chess', ...appearance, chess: d.chess, piece: p, standIn: null, diy: d.diy };
     return c ? { type: 'chess', ...appearance, chess: c, piece: p, standIn: ownSi(c) } : null;
   }

@@ -1319,6 +1319,9 @@ export async function createFieldView(host, options = {}) {
     for (let i = 0; i < GEO.HAND_SIZE; i++) {
       try { if (fn(piece, GEO.HAND_ROW, i, { area: 'hand', idx: i })) out.push([GEO.HAND_ROW, i]); } catch { /* illegal */ }
     }
+    for (let i = 0; i < GEO.TEMP_SIZE; i++) {
+      try { if (fn(piece, GEO.TEMP_ROW, GEO.TEMP_C0 + i, { area: 'temp', idx: i })) out.push([GEO.TEMP_ROW, GEO.TEMP_C0 + i]); } catch { /* illegal */ }
+    }
     return out;
   }
 
