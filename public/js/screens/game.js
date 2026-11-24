@@ -105,7 +105,6 @@ import { MatchBondDialog, matchInfoModel, regulationCoreAbsent } from '../ui/mat
 import { Ticker } from '../ui/ticker.js';
 import { EmoteWheel } from '../ui/emotes.js';
 import { MatchCommunication } from '../ui/matchCommunication.js';
-import { TeamOverview } from '../ui/teamOverview.js';
 import { EndlessVote } from '../ui/endlessVote.js';
 import { BandCommand, CommandDraft } from '../ui/bandCommand.js';
 import { EffectsList } from '../ui/effectsList.js';
@@ -241,7 +240,6 @@ export function GameScreen() {
   const showHud = !showResult && !['briefing', 'diy', 'draft'].includes(mode) && !held;
   const communication = chatId ? html`<div class=${cx('match-communication', !showHud && 'match-communication--floating')} key=${chatId}>
     <${MatchCommunication} ended=${matchEnded} />
-    ${matchEnded ? null : html`<${TeamOverview} pub=${pub} myId=${store.get().me.playerId} gd=${gd} />`}
   </div>` : null;
   let body;
   if (showHud) body = html`<${MatchScreen} communication=${communication} />`;
@@ -317,6 +315,7 @@ function MatchScreen({ communication = null } = {}) {
   const [watchWho, setWatchWho] = useState(null);        // { fieldId, playerId }: the teammate picked with 前往查看
   const [drawer, setDrawer] = useState(null);            // 'enemies' | 'info' | null
   const [bondOpen, setBondOpen] = useState(null);        // { id, ownerId, from }: the bond popup and whose bond it shows
+  const [teamOverviewOpen, setTeamOverviewOpen] = useState(false);
   const [bondsCollapsed, setBondsCollapsed] = useState(false);
   const [detail, setDetail] = useState(null);            // detail target
   // every shop / reward card opened by a tap is a new tap — `tap` in the target: two cards of one operator (the pool
@@ -1541,7 +1540,7 @@ function MatchScreen({ communication = null } = {}) {
     const screen = hudElRef.current?.parentElement;
     if (!screen) return undefined;
     const onDown = (e) => {
-      if (!live.current.bondOpen || e.target?.closest?.('.bpop, .bslot, .dbond, .ibond')) return;
+      if (!live.current.bondOpen || e.target?.closest?.('.bpop, .bslot, .dbond, .ibond, .team-ov__bond')) return;
       setBondOpen(null);
     };
     screen.addEventListener('pointerdown', onDown, true);
@@ -1554,7 +1553,7 @@ function MatchScreen({ communication = null } = {}) {
     const screen = hudElRef.current?.parentElement;
     if (!screen) return undefined;
     const onDown = (e) => {
-      if (!live.current.detail || e.target?.closest?.('.dpanel, .bpop, .bslot, .dbond')) return;
+      if (!live.current.detail || e.target?.closest?.('.dpanel, .bpop, .bslot, .dbond, .team-ov__unit')) return;
       if (e.target?.closest?.('.gm__field') && !closesOnFieldPress(live.current.detail)) return;
       setDetail(null);
     };
@@ -1746,7 +1745,7 @@ function MatchScreen({ communication = null } = {}) {
     const clearPointer = () => { pointer = null; };
     const leaveWindow = (e) => { if (!e.relatedTarget) clearPointer(); };
     const onKey = async (e) => {
-      if (e.target instanceof Element && e.target.closest('.match-communication, .team-overview')) return;
+      if (e.target instanceof Element && e.target.closest('.match-communication')) return;
       const act = shortcutFor(e, settingsStore.get().keys); // the player's key map (Settings > Shortcuts)
       const L = live.current;
       if (document.querySelector('.offerov[role="dialog"]')) return; // Only the visible dialog owns keyboard input.
@@ -1972,7 +1971,7 @@ function MatchScreen({ communication = null } = {}) {
     bonds: data.list('bonds'), chess: (id) => data.lookup('chess', id), mode: getMode(pub?.modeId),
   }) : null;
 
-  return html`<div class=${cx('screen', 'gm', `gm--${mode}`, communication && 'gm--room-chat', players.length > 4 && 'gm--large-team', regView && 'gm--reg', isBossPhase(phase) && 'is-boss', drag && 'is-dragging', barCollapsed && 'is-collapsed', deployPartial && 'is-deploy-partial', (sp || hasPersonalChoice || offerBlocksPrep(pub?.offers)) && 'has-sp', sp && 'has-spdraft', pen && 'is-pen', readyWhy && 'has-readywhy')}
+  return html`<div class=${cx('screen', 'gm', `gm--${mode}`, communication && 'gm--room-chat', players.length > 4 && 'gm--large-team', regView && 'gm--reg', teamOverviewOpen && 'has-team-overview', isBossPhase(phase) && 'is-boss', drag && 'is-dragging', barCollapsed && 'is-collapsed', deployPartial && 'is-deploy-partial', (sp || hasPersonalChoice || offerBlocksPrep(pub?.offers)) && 'has-sp', sp && 'has-spdraft', pen && 'is-pen', readyWhy && 'has-readywhy')}
       data-camera=${pen ? 'pen' : camKind}>
     <div class="gm__field" ref=${hostRef} onContextMenu=${(e) => e.preventDefault()}></div>
     ${viewKind === 'loading' ? html`<div class="gm__loading"><${Spinner} label="LOADING FIELD" /></div>` : null}
@@ -2009,6 +2008,22 @@ function MatchScreen({ communication = null } = {}) {
       </div>
 
       <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} bubbles=${bubbles} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
+        priv=${priv} gd=${gd} onBond=${(id, ownerId) => openBond(id, ownerId, 'strip')}
+        onOverviewChange=${setTeamOverviewOpen}
+        onChess=${(u, p) => {
+          if (!u?.id) return;
+          audio.sfx('click', { volume: 0.4 });
+          setDetail({
+            kind: u.kind === 'token' ? 'token' : 'chess',
+            id: u.id,
+            owner: p.playerId,
+            items: Array.isArray(u.items) && u.items.length ? u.items : null,
+            standInFor: u.standInFor || null,
+            diy: u.diy || null,
+            cultivation: u.cultivation,
+            tap: ++cardTap.current,
+          });
+        }}
         spMarks=${sp ? spMarks(sp, { solo }) : null}
         self=${Number.isFinite(priv?.lp) ? { lp: priv.lp, pending: liveLpNow.pending, unite: liveLpNow.unite, left: liveLpNow.left } : null}
         observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome } : null}

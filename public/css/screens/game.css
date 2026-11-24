@@ -532,10 +532,13 @@
 }
 
 /* ---- team panel ------------------------------------------------------------------------------------------- */
-.team { position: absolute; left: .22rem; top: 2.36rem; display: flex; flex-direction: column; gap: .14rem; pointer-events: none; }
+.team { position: absolute; left: .22rem; top: 2.36rem; display: flex; flex-direction: column; gap: .14rem; pointer-events: none; z-index: 12; }
+.team-ov__shell { display: flex; align-items: stretch; pointer-events: none; }
+.team-ov__rows { display: flex; flex-direction: column; gap: .14rem; pointer-events: none; min-width: 0; }
 .team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
+.team__avatar-wrap { position: relative; flex: none; display: inline-flex; }
 .team__btn {
-  position: relative; padding: 0; background: none; border: 0;
+  position: relative; padding: 0; background: none; border: 0; cursor: pointer;
   transition: transform var(--t-fast);
 }
 .team__btn:hover { transform: translateX(.03rem); }
@@ -584,12 +587,372 @@
 .team__frame--plain { inset: -.04rem; background: none; -webkit-mask: none; mask: none; border: 2px solid var(--mint-500); box-shadow: 0 0 .14rem rgba(78, 216, 175, .65); }
 .team__row.is-self.is-team .pavatar { box-shadow: none; }
 .team__bubble { position: absolute; left: calc(100% + .06rem); top: 50%; transform: translateY(-50%); width: max-content; max-width: 3.2rem; }
-/* 前往查看 / 返回战场 (research 09 §3.1: tapping a teammate's avatar expands a mint button under it) */
+/* 前往观战 / 返回战场 + 官方横排队友总览面板 */
 .team__row.is-open .pavatar { box-shadow: 0 0 0 2px var(--mint-400), 0 0 .2rem rgba(23, 249, 183, .45); }
 .team__row.is-open .team__info { background: linear-gradient(90deg, rgba(13, 44, 36, .92), rgba(8, 11, 10, 0)); }
 .team__ob, .team__back { align-self: flex-start; margin-top: .04rem; min-width: 1.1rem; animation: pop-in var(--t-fast) var(--ease-out); }
 .team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
 .team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
+
+.team.is-overview {
+  z-index: 18;
+  left: .2rem;
+  right: .2rem;
+  width: auto;
+  max-width: 18.8rem;
+  pointer-events: auto;
+}
+.gm.has-team-overview .dpanel { z-index: 28; }
+.gm.has-team-overview .bpop { z-index: 29; }
+.team-ov__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 8, .38);
+  pointer-events: auto;
+  z-index: -1;
+}
+.team.is-overview .team-ov__shell {
+  width: 100%;
+  max-height: calc(100vh - 4.7rem);
+  gap: .08rem;
+  pointer-events: auto;
+}
+.team.is-overview .team-ov__rows {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: .08rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: .06rem;
+  background: linear-gradient(180deg, rgba(7, 11, 13, .92), rgba(5, 8, 10, .94));
+  border: 1px solid rgba(130, 175, 195, .28);
+  box-shadow: 0 .14rem .42rem rgba(0, 0, 0, .65);
+  pointer-events: auto;
+}
+.team.is-overview .team__row {
+  display: grid;
+  grid-template-columns: .86rem 2.45rem minmax(3.4rem, 4.4rem) minmax(0, 1fr) .92rem;
+  align-items: center;
+  gap: .14rem;
+  padding: .08rem .12rem .08rem .08rem;
+  background: linear-gradient(90deg, rgba(16, 22, 26, .95), rgba(10, 14, 17, .9) 45%, rgba(12, 17, 21, .94));
+  border: 1px solid rgba(255, 255, 255, .09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.team.is-overview .team__row.is-self {
+  border-color: rgba(78, 216, 175, .38);
+  background: linear-gradient(90deg, rgba(14, 34, 30, .95), rgba(10, 16, 18, .92) 45%, rgba(12, 18, 21, .94));
+}
+.team.is-overview .team__row.is-watched {
+  border-color: rgba(246, 163, 41, .52);
+}
+.team.is-overview .team__btn:hover { transform: none; }
+.team.is-overview .team__seat { top: auto; bottom: -.02rem; left: -.02rem; }
+.team.is-overview .team__you { top: auto; bottom: -.06rem; right: -.06rem; }
+.team__ribbon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .02rem;
+  min-width: 0;
+  margin: 0;
+  padding: .03rem .03rem;
+  border: 0;
+  font-size: .12rem;
+  font-weight: 800;
+  line-height: 1.15;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.team__ribbon .btn__label { letter-spacing: .04em; }
+.team__ribbon-icon { width: .12rem; height: .12rem; flex: none; }
+.team__ob.team__ribbon {
+  background: linear-gradient(180deg, rgba(72, 216, 240, .96), rgba(34, 152, 196, .94));
+  color: #041822;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+}
+.team__ob.team__ribbon:hover { filter: brightness(1.08); }
+.team__back.team__ribbon {
+  background: linear-gradient(180deg, rgba(96, 246, 204, .97), rgba(44, 178, 140, .95));
+  color: #041b14;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+}
+.team__back.team__ribbon:hover { filter: brightness(1.08); }
+.team__ribbon--watching {
+  background: rgba(246, 163, 41, .92);
+  color: #1c1002;
+  cursor: default;
+}
+.team-ov__who {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: .06rem;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: .1rem;
+  border-right: 1px solid rgba(255, 255, 255, .08);
+}
+.team-ov__name-row {
+  display: flex;
+  align-items: center;
+  gap: .06rem;
+  min-width: 0;
+}
+.team-ov__status {
+  margin-left: auto;
+  flex: none;
+}
+.team-ov__meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .05rem .07rem;
+  min-width: 0;
+}
+.team-ov__meta-row > * {
+  flex: none;
+}
+.team.is-overview .team__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: calc(.16 * var(--t));
+  font-weight: 700;
+  color: var(--text-hi);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-ov__tag {
+  flex: none;
+  padding: .01rem .05rem;
+  border-radius: 2px;
+  font-size: calc(.11 * var(--t));
+  font-weight: 700;
+  line-height: 1.25;
+}
+.team-ov__tag.is-self { background: var(--mint-500); color: var(--text-on-mint); }
+.team-ov__tag.is-ai { background: #a9c3d8; color: #0b1520; }
+.team-ov__lv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .03rem;
+  padding: .02rem .07rem;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(34, 42, 46, .92);
+  color: var(--text-hi);
+  font-size: calc(.12 * var(--t));
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.team-ov__lv small { font-size: .8em; opacity: .8; }
+.team-ov__lv.is-lv4 { border-color: rgba(52, 184, 216, .6); background: rgba(24, 58, 72, .85); color: #9ce7ff; }
+.team-ov__lv.is-lv5 { border-color: rgba(186, 128, 255, .65); background: rgba(56, 32, 78, .85); color: #e2c2ff; }
+.team-ov__lv.is-lv6 { border-color: rgba(248, 191, 0, .75); background: rgba(78, 52, 16, .88); color: #ffe08a; }
+.team-ov__lv.is-dead { border-color: rgba(255, 84, 84, .45); background: rgba(54, 18, 18, .82); color: #ffaaa5; }
+
+.team-ov__bonds {
+  display: flex;
+  align-items: center;
+  gap: .1rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: .02rem .08rem .02rem 0;
+  border-right: 1px solid rgba(255, 255, 255, .08);
+  scrollbar-width: thin;
+}
+.team-ov__bond {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .02rem;
+  min-width: .64rem;
+  padding: .02rem;
+  background: none;
+  border: 0;
+  color: var(--text-hi);
+  cursor: pointer;
+}
+.team-ov__bond:hover .team-ov__bdisc { filter: brightness(1.15); }
+.team-ov__bdisc {
+  width: .48rem;
+  height: .48rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 45%, rgba(62, 118, 224, .62), rgba(22, 42, 92, .92) 72%);
+  border: 1.5px solid rgba(124, 178, 255, .78);
+  box-shadow: 0 0 .12rem rgba(86, 152, 255, .45);
+}
+.team-ov__bond.is-core .team-ov__bdisc {
+  background: radial-gradient(circle at 50% 45%, rgba(44, 212, 176, .62), rgba(14, 72, 62, .92) 72%);
+  border-color: rgba(94, 244, 206, .84);
+  box-shadow: 0 0 .12rem rgba(64, 232, 190, .48);
+}
+.team-ov__bdisc .bglyph { width: .3rem; height: .3rem; }
+.team-ov__blayer {
+  font-size: calc(.13 * var(--t));
+  font-weight: 700;
+  line-height: 1.05;
+  color: #d7ecff;
+}
+.team-ov__bname {
+  font-size: calc(.11 * var(--t));
+  color: var(--text-md);
+  line-height: 1.1;
+  white-space: nowrap;
+  max-width: .78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team-ov__lineup {
+  display: flex;
+  align-items: center;
+  gap: .06rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: .02rem .06rem .02rem 0;
+  scrollbar-width: thin;
+}
+.team-ov__unit {
+  flex: none;
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: transform var(--t-fast), filter var(--t-fast);
+}
+.team-ov__unit:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.12);
+}
+.team-ov__unit:focus-visible {
+  outline: 2px solid var(--mint-400);
+  outline-offset: 1px;
+}
+.team-ov__lineup .uthumb {
+  flex: none;
+  width: .76rem;
+  height: .76rem;
+}
+.team-ov__empty {
+  font-size: calc(.13 * var(--t));
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.team-ov__band {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.team-ov__bandbtn {
+  position: relative;
+  width: .84rem;
+  height: .84rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(108, 202, 224, .5);
+  background: radial-gradient(circle at 50% 35%, rgba(36, 82, 92, .65), rgba(9, 16, 20, .96));
+  color: var(--text-md);
+  cursor: pointer;
+}
+.team-ov__bandbtn:hover, .team-ov__bandbtn.is-open {
+  border-color: var(--mint-400);
+  box-shadow: 0 0 .14rem rgba(89, 244, 202, .45);
+}
+.team-ov__bandbtn.is-empty {
+  cursor: default;
+  border-color: rgba(255, 255, 255, .14);
+  color: var(--text-dim);
+}
+.team-ov__bandimg { width: 100%; height: 100%; object-fit: cover; }
+.team-ov__bandtxt { font-size: calc(.22 * var(--t)); font-weight: 800; color: var(--mint-400); }
+.team-ov__bandmag {
+  position: absolute;
+  right: .03rem;
+  bottom: .03rem;
+  width: .22rem;
+  height: .22rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(6, 12, 15, .82);
+  color: #cfe8f2;
+}
+.team-ov__bandmag .icon { width: .14rem; height: .14rem; }
+.team-ov__bandpop {
+  position: absolute;
+  right: calc(100% + .1rem);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3.4rem;
+  max-width: 48vw;
+  z-index: 20;
+  padding: .1rem .12rem;
+  border: 1px solid var(--mint-600);
+  background: rgba(10, 16, 18, .96);
+  box-shadow: 0 .1rem .28rem rgba(0, 0, 0, .65);
+}
+.team-ov__bandpop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .08rem;
+  margin-bottom: .06rem;
+  font-size: calc(.15 * var(--t));
+  color: var(--mint-400);
+}
+.team-ov__bandpop-head button {
+  padding: .02rem;
+  background: none;
+  border: 0;
+  color: var(--text-md);
+  cursor: pointer;
+}
+.team-ov__bandpop-head .icon { width: .16rem; height: .16rem; }
+.team-ov__bandpop-body {
+  font-size: calc(.13 * var(--t));
+  line-height: 1.5;
+  color: var(--text-md);
+}
+
+.team-ov__close {
+  flex: none;
+  width: .36rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(130, 175, 195, .28);
+  background: rgba(8, 12, 15, .9);
+  color: var(--text-hi);
+  cursor: pointer;
+}
+.team-ov__close:hover { background: rgba(20, 42, 46, .95); color: var(--mint-400); }
+.team-ov__close .icon { width: .22rem; height: .22rem; }
+
+@media (max-width: 1024px) {
+  .team.is-overview .team__row {
+    grid-template-columns: .8rem 2.15rem minmax(2.5rem, 3.4rem) minmax(0, 1fr) .8rem;
+    gap: .08rem;
+  }
+}
 /* 完美连胜 / 领袖伤害 (ui/avatarBadges.js, §37.148). The streak holder (33.76 units = .338rem) is centred .024rem inside
    the avatar's right edge and .066rem below its top (recording BV13LWM6BEvY); the leader-damage layers cover the
    avatar's own .8rem box (the flare, twice as wide, crosses both edges). Neither takes a click. The own row's "you"
