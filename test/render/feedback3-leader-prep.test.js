@@ -18,6 +18,7 @@ import { COLS } from '../../server/sim/constants.js';
 import { DATA } from '../match/harness.js';
 import { leaderStand } from '../../public/js/render/prepfield.js';
 import { hitTiles } from '../../public/js/render/pick.js';
+import { buildBossRoute, projectBossRoute, sampleBossRouteFrame } from '../../public/js/render/bossRoute.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
@@ -92,4 +93,39 @@ test('the leader\'s view (render/app.js setLeader: a boss, not a prep view) show
     assert.equal(v.spFill.visible, false);
     v.destroy();
   } finally { fake.restore(); }
+});
+
+test('boss route builds an ordered moving ribbon, numbers waypoints in visit order, separates portals and offsets reduced-motion lanes', () => {
+  const p = (kind, ...points) => ({ kind, points });
+  const geometry = buildBossRoute({
+    paths: [
+      p('approach', [4, 10], [4, 11]),
+      p('patrol', [4, 11], [4, 13], [4, 11]),
+      p('travel', [2, 15], [2, 17]),
+    ],
+    marks: [
+      { kind: 'waypoint', at: [4, 11] }, { kind: 'wait', at: [4, 11] },
+      { kind: 'waypoint', at: [4, 13] },
+      { kind: 'portal', at: [4, 13] }, { kind: 'portal', at: [2, 15] },
+    ],
+  });
+  assert.equal(geometry.runs.length, 2, 'continuous approach+patrol stays one run; disjoint portal starts a second run');
+  assert.equal(geometry.runs[0].segments.length, 3, 'approach + outgoing + returning stay in exact sequence');
+  const ink = projectBossRoute(geometry, ([row, col]) => ({ x: col * 40, y: (6 - row) * 40, s: 40 }));
+  assert.deepEqual(
+    ink.marks.map(({ x, y, kind, order }) => [x, y, kind, order]),
+    [[440, 80, 'wait', 1], [520, 80, 'portal', null], [600, 160, 'portal', null]],
+    'visit order is kept, coincident waypoint+wait gets order 1, portals take no waypoint number',
+  );
+  // Outgoing and returning spans are sampled at distinct times rather than collapsing into opposing arrows.
+  const outgoing = sampleBossRouteFrame(ink, 0);
+  assert.ok(outgoing.spans.length > 0 && outgoing.heads.length === 1);
+  assert.ok(outgoing.heads[0].points[1].x > outgoing.heads[0].points[0].x, 'initially heading right');
+  const returning = sampleBossRouteFrame(ink, (4.2 - ink.initialOffset) / ink.speed);
+  assert.ok(returning.heads.length === 1 && returning.heads[0].points[1].x < returning.heads[0].points[0].x, 'later heading left on the return leg');
+  // In reduced motion, opposite directions on the retraced corridor offset onto parallel lanes.
+  const patrolArrows = ink.staticArrows.filter((arrow) => arrow.kind === 'patrol');
+  assert.equal(patrolArrows.length, 2);
+  assert.notEqual(patrolArrows[0].points[1].y, patrolArrows[1].points[1].y, 'reduced-motion static lanes separate go/return');
+  assert.equal(buildBossRoute({ paths: [p('travel', [3, 3], [3, 3])] }), null, 'zero movement shows no overlay');
 });

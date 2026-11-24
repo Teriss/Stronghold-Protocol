@@ -191,15 +191,22 @@ export class PlayerRound {
       bonds: bondSnapshot(reached ? this.bondsView() : this.bonds),
       bandId: this.bandId,
       ...(bandProgress ? { bandProgress } : {}),
-      playerEffects: this.effects.filter((e) => e.battle !== false).map((e) => ({
-        id: e.id, key: e.key ?? null, source: e.iconKind ?? null, params: e.params ?? null, counter: e.counter ?? null, data: e.data ?? null,
-      })),
-      deviceOverrides: { ...this.deviceOverrides },
+      ...this.battleDeviceInput(),
     };
     // 规程 bench summons. Default tables have neither effect key, so the field is absent and the input stays as before.
     const bench = regulationBench(this);
     if (bench) input.bench = bench;
     return input;
+  }
+
+  /** Device state and the battle effects that can override it, read without refreshing board legality. */
+  battleDeviceInput() {
+    return {
+      playerEffects: this.effects.filter((e) => e.battle !== false).map((e) => ({
+        id: e.id, key: e.key ?? null, source: e.iconKind ?? null, params: e.params ?? null, counter: e.counter ?? null, data: e.data ?? null,
+      })),
+      deviceOverrides: { ...this.deviceOverrides },
+    };
   }
 }
 

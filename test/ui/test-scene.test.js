@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { loadData } from '../../server/data.js';
 import * as spec from '../../server/sim/spec.js';
+import { buildBossRoutePreview } from '../../server/sim/bossRoutePreview.js';
 import { DataSource } from '../../server/sim/simdata.js';
 import { GEO } from '../../shared/constants.js';
 import { makeRunner } from '../../public/js/battle/localPlayback.js';
@@ -388,4 +389,32 @@ test('regulation version (规程·序列Ⅰ) includes 云迹, 规程 maps, and �
   for (let i = 0; i < 30; i++) battle.step();
   assert.deepEqual(battle.errors, []);
   assert.ok(battle.allyUnits.some(u => u.def?.charId === 'char_4165_ctrail'));
+
+  // Switch to the right half: keeps deployed operators mirrored, uses right-half escorts and the official right branch route.
+  scene = editScene(scene, { type: 'selectBoss', bossId: 'boss_2' }, vCtx).scene;
+  const leftSpec = sceneSpec(vSim, scene, vTerrain.goal, { config: vRaw.config, bosses: vRaw.bosses });
+  const leftRoute = buildBossRoutePreview({ ...leftSpec, side: 'L' }, vSim.ds);
+  assert.deepEqual(leftRoute.marks.map(m => m.at), [[5, 9], [2, 3], [3, 9]]);
+
+  scene = editScene(scene, { type: 'setBossSide', side: 'R' }, vCtx).scene;
+  assert.equal(scene.bossSide, 'R');
+  assert.equal(scene.board.length, 1, 'switching halves preserves deployed operators');
+  const rightTerrain = sceneTerrain(vSim, bossStage, 'boss', 'R');
+  assert.equal(rightTerrain.deployField, 'bossR');
+  const rightSpec = sceneSpec(vSim, scene, rightTerrain.goal, { config: vRaw.config, bosses: vRaw.bosses });
+  assert.equal(rightSpec.players[0].side, 'R');
+  assert.ok(rightSpec.spawns.filter(s => s.tag !== 'boss' && s.tag !== 'part').every(s => rightSpec.routes[s.routeIndex].end[1] > 10),
+    'right-half mode spawns only right-half escorts');
+  const rightRoute = buildBossRoutePreview({ ...rightSpec, side: 'R' }, vSim.ds);
+  assert.deepEqual(rightRoute.marks.map(m => m.at), [[3, 11], [2, 17], [5, 11]],
+    '规程 铳 right half uses its asymmetric right-branch patrol');
+  const rightBattle = spec.createBattleFromSpec(rightSpec, vSim.ds, { quiet: true });
+  rightBattle.start();
+  const deployedAlly = rightBattle.allyUnits.find(u => u.def?.charId === 'char_4165_ctrail');
+  assert.equal(deployedAlly.x, 20 - deployTile[1], 'right half mirrors operator column');
+  assert.equal(deployedAlly.dir, 'LEFT', 'right half mirrors operator facing');
+  for (let i = 0; i < 60; i++) rightBattle.step();
+  assert.deepEqual(rightBattle.errors, []);
+  const rightBoss = rightBattle.enemies.find(e => e.defId === 'enemy_9017_achunt');
+  assert.ok(rightBoss && rightBoss.x > 10, 'right-half Boss actually moves onto the right half in combat');
 });

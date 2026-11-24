@@ -20,7 +20,8 @@
 //                                               operator that just arrived on the bench (a purchase, a reward, a grant)
 //                                               and a merge's elite [ASSUMED], a piece this state puts on a board tile it
 //                                               was not on — from the bench, from another tile, a swap — [ASSUMED]
-//   view.replayDeploys(uids)                    the round start: the own board's pieces `uids` (deployment order) land one
+//   view.setBossRoute(route | null)             stage-space route through the boss prep or a scouted boss prep
+//   view.replayDeploys(uids)                    the round start's own board pieces `uids` (deployment order) land one
 //                                               after another, DEPLOY_REPLAY_MS apart (the maintainer's confirmation from
 //                                               official play, 2026-10-13) → how many of them the board holds now (0: not
 //                                               built yet); the timers end with prep mode (enterBattle) and destroy
@@ -162,6 +163,7 @@ import { loadThree, loadBoardPack, loadScenePack, webgl2Available, boardArtListe
 import { BoardScene } from './board3d/scene.js';
 import { layoutPen, penSignature } from './pen.js';
 import { IDENTITY, bossPrepField, tilesToDisp, leaderStand } from './prepfield.js';
+import { createBossRouteLayer } from './app/bossRoute.js';
 import { pickOnTile, pickBattle, hitTiles } from './pick.js';
 import { promotionsOf } from './promote.js';
 import { ensurePixi } from './app/pixi.js';
@@ -266,14 +268,14 @@ export async function createFieldView(host, options = {}) {
   const backdrop = new P.Container();
   const world = new P.Container();
   const layers = {
-    ground: new P.Container(), anim: new P.Container(), overlay: new P.Container(), shadow: new P.Container(),
+    ground: new P.Container(), anim: new P.Container(), bossRoute: new P.Container(), overlay: new P.Container(), shadow: new P.Container(),
     groundFx: new P.Container(), fxNormal: new P.Container(), units: new P.Container(), fxAdd: new P.Container(),
     bars: new P.Container(), text: new P.Container(), screen: new P.Container(),
     // the official battle effects (render/vfx): their ground pass under the units, their over pass above them
     vfxGround: new P.Container(), vfxOver: new P.Container(),
   };
   layers.units.sortableChildren = true;
-  world.addChild(layers.ground, layers.anim, layers.overlay, layers.shadow, layers.groundFx, layers.vfxGround, layers.fxNormal, layers.units, layers.fxAdd, layers.vfxOver, layers.bars, layers.text);
+  world.addChild(layers.ground, layers.anim, layers.bossRoute, layers.overlay, layers.shadow, layers.groundFx, layers.vfxGround, layers.fxNormal, layers.units, layers.fxAdd, layers.vfxOver, layers.bars, layers.text);
   stage.addChild(backdrop, world, layers.screen);
 
   const bg = backdropTextures();
@@ -393,6 +395,7 @@ export async function createFieldView(host, options = {}) {
   // replay's first landings together); a wish kept until the first gesture / audible SFX
   try { ctx.audio?.warmLandings?.(); } catch { /* the sound is optional */ }
   const tiles = new TileField({ ground: layers.ground, overlay: layers.overlay, props: layers.units, anim: layers.anim });
+  const bossRoute = createBossRouteLayer(P, layers.bossRoute, heightAt);
   setupCleanup.push(() => tiles.destroy());
   const fx = new FxSystem({
     P, layers, cam: () => cam, settings, assets, heightAt, redVignette: bg.red, surfaceLayer: ctx.surfaceLayer,
@@ -676,6 +679,8 @@ export async function createFieldView(host, options = {}) {
     camOpts = { ...o };
     // the field actually shown (a 'prep' camera on the boss rows is the Final Assault prep: boss field built / drawn)
     const vk = viewKind(camKind, camOpts);
+    if (vk !== 'bossPrep' && vk !== 'boss' && vk !== 'pen') bossRoute.set(null);
+    syncBossRoute();
     if (vk === 'prep') setPrepField(IDENTITY);
     else if (vk === 'bossPrep') setPrepField(bossPrepField(camOpts.side === 'R' ? 'R' : 'L'));
     const target = targetCamera(camKind, camOpts);
@@ -766,11 +771,26 @@ export async function createFieldView(host, options = {}) {
     bgGrid.tilePosition.set(-cam.tx * 30, -cam.ty * 10);
   }
 
+  function syncBossRoute() {
+    const vk = viewKind(camKind, camOpts);
+    const scouting = mode === 'battle' && battleMeta?.prep && (battleMeta.kind === 'boss' || battleMeta.kind === 'hidden');
+    bossRoute.show(vk === 'bossPrep' && mode === 'prep' || scouting && (vk === 'bossPrep' || vk === 'boss'));
+  }
+
+  function setBossRoute(route) {
+    if (destroyed) return false;
+    bossRoute.set(route ?? null);
+    syncBossRoute();
+    return true;
+  }
+
   // ---- stage ----------------------------------------------------------------------------------------------
 
   function setStage(st) {
     if (!st || typeof st !== 'object' || !Array.isArray(st.rows)) return false;
+    if (stageRec && st.id !== stageRec.id) setBossRoute(null);
     stageRec = st;
+    bossRoute.invalidate();
     tiles.setStage(st);
     tiles.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null);
     if (board3d) { board3d.setStage(st); board3d.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null); useOfficialScene(st); }
@@ -1088,6 +1108,7 @@ export async function createFieldView(host, options = {}) {
   }
 
   function enterPrepMode() {
+    setBossRoute(null);
     mode = 'prep';
     held.clear();
     cancelReplay();
@@ -1542,6 +1563,7 @@ export async function createFieldView(host, options = {}) {
 
   function enterBattle(meta) {
     if (destroyed || !meta || typeof meta !== 'object') return false;
+    if (!meta.prep || !battleMeta?.prep || meta.fieldId !== battleMeta.fieldId || meta.kind !== battleMeta.kind) setBossRoute(null);
     holdScene(true); // before the prep views go: the cache is never "quiet" across the switch
     presentation.reset();
     drag.reset();
@@ -2054,6 +2076,7 @@ export async function createFieldView(host, options = {}) {
         else board3d.render(cam, clock);
       }
       tiles.project(cam);
+      bossRoute.update(cam, dt);
       updateBackdrop(clock);
       syncGrassFx();
       if (mode === 'battle') {
@@ -2187,6 +2210,7 @@ export async function createFieldView(host, options = {}) {
     setSkins,
     setCamera,
     setPrep,
+    setBossRoute,
     replayDeploys,
     /** Enemy preview pen: a list in m.private.nextEnemies shape, or null to empty it (setPrep does this itself). */
     setPen(list) { if (destroyed) return false; setPenList(Array.isArray(list) ? list : null); return true; },
@@ -2322,6 +2346,7 @@ export async function createFieldView(host, options = {}) {
     },
     destroy() {
       if (destroyed) return;
+      setBossRoute(null);
       destroyed = true;
       try { ro?.disconnect(); } catch { /* ignore */ }
       try { offAssets?.(); } catch { /* ignore */ }
@@ -2342,6 +2367,7 @@ export async function createFieldView(host, options = {}) {
       try { ofx.destroy(); } catch { /* ignore */ }
       pluginFx.destroy();
       try { tiles.destroy(); } catch { /* ignore */ }
+      try { bossRoute.destroy(); } catch { /* ignore */ }
       try { impostors.destroy(); } catch { /* ignore */ }
       listeners.clear();
       try { board3d?.destroy(); } catch { /* ignore */ }
@@ -2356,6 +2382,7 @@ export async function createFieldView(host, options = {}) {
         fps: Math.round(fps * 10) / 10, frameMs: Math.round(frameMs * 100) / 100, cpuMs: Math.round(cpuMs * 100) / 100, renderMs: Math.round(renderMs * 100) / 100, mode, units: views.size, impostor: impInterval, impostorAtlas: { ...impostors.stats }, boardArt: !!tiles.atlas.art,
         board3d: board3d ? { on: true, ...board3d.stats(), losses: recover.count } : { on: false, error: board3dError, recovering: !!recover.timer, losses: recover.count },
         pen: penViews.size, penHidden, prepField: prepXf.kind === 'bossPrep' ? prepXf.side : null, lod: loadLevel, culled: culledCount,
+        bossRoute: bossRoute.summary,
         ...fx.counts, officialFx: ofx.stats(), spine: assets.spine?.stats ? assets.spine.stats() : null, renderT: interp.renderT, rate: interp.rate,
         buffered: interp.size, camera: cam.params(),
       };
@@ -2364,7 +2391,7 @@ export async function createFieldView(host, options = {}) {
     /** Dev hooks (demo / tests). */
     debug: {
       app, get cam() { return cam; }, get board3d() { return board3d; }, tiles, views, penViews, get leader() { return leader; }, interp, fx, ofx, wiring, ctx, drag, get camKind() { return viewKind(camKind, camOpts); },
-      promotions, landings, get replaying() { return !!replayTimer; },
+      promotions, landings, get replaying() { return !!replayTimer; }, get bossRoute() { return bossRoute.summary; },
       // picking (render/pick.js) at canvas px: the prep piece / battle view / pen view there, the ground tile under it
       pick: { pieceAt, mapCharAt, battleUnitAt, penUnitAt, groundTile },
     },

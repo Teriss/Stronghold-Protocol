@@ -548,51 +548,46 @@ export function compileRoute(route, rect = null) {
  * Flow field of a WALK leg target usable from tile key `k`: the live field, else the obstacle-free one (the goal is
  * walled off by hard blocks), else null.
  */
-function legField(b, r, c, k) {
-  const g = b.grid;
-  const f = g.flowField(r, c);
+function legField(grid, r, c, k) {
+  const f = grid.flowField(r, c);
   if (k >= 0 && f.dist[k] >= 0) return f;
-  const f2 = g.flowField(r, c, { ignoreObstacles: true });
+  const f2 = grid.flowField(r, c, { ignoreObstacles: true });
   if (k >= 0 && f2.dist[k] >= 0) return f2;
   return null;
 }
 
-const tileKey = (b, e) => {
-  const r = Math.round(e.y), c = Math.round(e.x);
-  return b.grid.inBounds(r, c) ? r * COLS + c : -1;
-};
-
 /**
- * Build the waypoint list (world points) for the current move leg. Ground legs: the smoothed flow-field chain from
- * the enemy's tile (next[tile], next[next[tile]], …, the target) — straight to the target when no field reaches it.
+ * World points for a move leg, shared by live movement and the preparation preview. Ground legs use the smoothed
+ * flow-field chain from the start tile, or go straight to the destination when no field reaches it.
  */
-function planLeg(b, e, leg) {
-  const R = e.route;
-  let pts;
-  if (e.motion === 'FLY') {
-    pts = [{ x: leg.c, y: leg.r }];
-  } else {
-    const k = tileKey(b, e);
-    const f = legField(b, leg.r, leg.c, k);
-    pts = [];
-    if (f) {
-      let x = k;
-      let guard = COLS * 32;
-      while (x !== f.dest && guard-- > 0) { // loop-cap: flow-field guard
-        x = f.next[x];
-        if (x < 0) break;
-        pts.push({ x: x % COLS, y: (x / COLS) | 0 });
-      }
-    }
-    const last = pts[pts.length - 1];
-    if (!last || last.x !== leg.c || last.y !== leg.r) pts.push({ x: leg.c, y: leg.r });
-    // The smoothed chain is line-of-sight clear from the tile CENTRE only. An enemy re-planning off-centre (pushed,
-    // released by 诱导, an obstacle change mid-segment) first steps back to its tile centre when the straight line to
-    // the first waypoint would cut a tile it cannot walk (a fence corner, a crate) — else it would walk inside it.
-    if (f && (e.x !== k % COLS || e.y !== ((k / COLS) | 0)) && !straightClear(b.grid, e.x, e.y, pts[0])) {
-      pts.unshift({ x: k % COLS, y: (k / COLS) | 0 });
+export function routeLegPoints(grid, motion, x, y, leg) {
+  if (motion === 'FLY') return [{ x: leg.c, y: leg.r }];
+  const r = Math.round(y), c = Math.round(x);
+  const k = grid.inBounds(r, c) ? r * COLS + c : -1;
+  const f = legField(grid, leg.r, leg.c, k);
+  const pts = [];
+  if (f) {
+    let key = k;
+    let guard = COLS * 32;
+    while (key !== f.dest && guard-- > 0) { // loop-cap: flow-field guard
+      key = f.next[key];
+      if (key < 0) break;
+      pts.push({ x: key % COLS, y: (key / COLS) | 0 });
     }
   }
+  const last = pts[pts.length - 1];
+  if (!last || last.x !== leg.c || last.y !== leg.r) pts.push({ x: leg.c, y: leg.r });
+  // The smoothed chain is line-of-sight clear from the tile CENTRE only. An enemy re-planning off-centre (pushed,
+  // released by 诱导, an obstacle change mid-segment) first steps back to its tile centre when the straight line to
+  // the first waypoint would cut a tile it cannot walk (a fence corner, a crate) — else it would walk inside it.
+  const cx = k % COLS, cy = (k / COLS) | 0;
+  if (f && (x !== cx || y !== cy) && !straightClear(grid, x, y, pts[0])) pts.unshift({ x: cx, y: cy });
+  return pts;
+}
+
+function planLeg(b, e, leg) {
+  const R = e.route;
+  const pts = routeLegPoints(b.grid, e.motion, e.x, e.y, leg);
   R.pts = pts;
   R.ptIdx = 0;
   R.version = b.grid.version;
@@ -622,7 +617,7 @@ function tailLength(b, e, idx) {
         const [sr, sc] = starts[i];
         len = hypot(L.r - sr, L.c - sc);
         if (e.motion !== 'FLY' && b.grid.inBounds(sr, sc)) {
-          const f = legField(b, L.r, L.c, sr * COLS + sc);
+          const f = legField(b.grid, L.r, L.c, sr * COLS + sc);
           const fl = f ? b.grid.fieldLength(f, sr * COLS + sc) : Infinity;
           if (Number.isFinite(fl)) len = fl;
         }

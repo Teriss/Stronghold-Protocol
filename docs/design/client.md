@@ -61,15 +61,27 @@ wall-clock/interpolation timing. Official effects still follow the snapshot cloc
 own renderer's loaded instances/procedural calls. These diagnostic counts depend on assets and rendering, never
 participate in simulation results, and are distinct from damage/heal totals. Match test commands are not part of this page.
 
-**Lobby test scene (0.4.0, §37.241).** The lobby's 测试场景 link opens an independent page for everyone. It uses the
-default 盟约 data, starts with an empty 战场#01, and offers the active normal stages. Operators and equippable items
-enter the shared 整备区. A player places operators on valid deployment tiles, equips them within their normal
-capacity, and places enemies on tiles from which their movement type can reach the goal. The stage starts its
-usual devices. [ASSUMED] This single-battle editor uses default loadouts, one piece per tile, seed 1 and a 240 s cap.
-Shop, merging, bond activation and the effects of equipment consumed during preparation belong to the match.
-The existing simulation's snapshots and events render locally. Stop and returning from a finished battle restore
-the editor's setup. Changing maps discards it immediately, including any pieces on the bench. Leaving the page
-discards the session. There is no room, reward or match record for the exercise.
+**Lobby test scene (0.4.0, §37.241).** The lobby's 测试场景 link opens an independent page for everyone. It starts
+with the lobby's selected version and an empty 战场#01, and offers the version's normal and Boss stages. Operators
+and equippable items enter the shared 整备区. A player places operators on valid deployment tiles and equips them
+within their normal capacity. A normal stage lets the player place enemies where their movement type can reach the
+goal. A Boss stage uses the selected leader's official wave and routes, and lets the player switch between the left
+and right half of the Boss field (mirroring operator placement and switching to the right-half wave and leader
+branch when on the right). The stage starts its usual devices.
+[ASSUMED] Normal test battles use seed 1 and a 240 s cap. The existing simulation's snapshots and events render
+locally. Stop and returning from a finished battle restore the editor's setup. Changing maps discards it immediately,
+including any pieces on the bench. Leaving the page discards the session. There is no room, reward or match record for
+the exercise.
+
+**Boss route preview (§37.242).** During preparation for the Final Assault or Hidden Core, and after selecting a
+leader in a Boss test scene, an Arknights-style moving red trail traces the planned movement in visit order on the
+starting terrain, with numbered waypoint badges (`1`, `2`, `3`…) marking the patrol sequence and portals breaking
+the trail. The finite fading tail keeps retraced corridors uncluttered and makes the walking order immediate.
+Immobilized leaders have no route overlay. A paired field shows the player's branch, or the watched player's branch
+when scouting. The `Boss 路线` toggle starts on and keeps its state while the screen is open. Reduced motion replaces
+the moving ribbon with static offset lanes and the same numbered waypoints. The layer hides in the enemy pen and in
+combat, and has no pointer interactions. Both renderers project the stage coordinates onto the same board as the
+pieces. Blocking, attacks, skill movement and changes to obstacles during combat can change the leader's movement.
 
 Bond-layer audio (#482): live own preparation gains arrive as `m.layer`; the displayed battle's `layer` tuples
 play the same `bondUp` cue. A gain of several layers plays once, including gains to inactive bonds. The official

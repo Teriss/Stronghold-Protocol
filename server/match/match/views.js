@@ -16,7 +16,12 @@ import { bountySpawns, previewOf } from '../waves.js';
 import { timelineAt } from '../fields.js';
 import { bossFieldPlacement } from '../finalAssault.js';
 import { battleProgress } from '../../sim/spec.js';
+import { buildBossRoutePreview } from '../../sim/bossRoutePreview.js';
+import { playerDeviceOverrides } from '../../sim/content/devices.js';
 import { endlessMultiplier } from './endless.js';
+
+// Each plan owns fresh wave objects. Keep one terrain revision per half until that wave is replaced.
+const BOSS_ROUTE_VIEWS = new WeakMap();
 
 /** Milliseconds since the match started. A stamp before the start, or a bad stamp, is 0. The stored log keeps the epoch. */
 function auditClock(at, startedAt) {
@@ -334,6 +339,36 @@ export class MatchViews {
     return out;
   }
 
+  /** Prepared leader route in stage coordinates for this player's half, shared by their private and scout views. */
+  bossRouteFor(ps) {
+    if (!ps?.alive || this.phase !== PHASE.PREP || this.fields.length) return null;
+    const group = this.bossGroupOf(ps);
+    if (!group) return null;
+    const { wave, side } = group;
+    // No battle input validation or prep hooks are needed to read the starting terrain. Both halves can affect pathing.
+    const players = group.players.map((id, i) => {
+      const p = this.players.get(id);
+      return { playerId: id, seat: p.seat, bandId: p.bandId, side: i === 0 ? 'L' : 'R', colOffset: i === 0 ? 0 : 8, ...p.battleDeviceInput() };
+    });
+    const signature = JSON.stringify([this.stageId, players.map((input) => [
+      input.playerId, input.bandId, [...playerDeviceOverrides({ input, playerEffects: input.playerEffects })].sort(),
+    ])]);
+    let bySide = BOSS_ROUTE_VIEWS.get(wave);
+    if (!bySide) BOSS_ROUTE_VIEWS.set(wave, (bySide = {}));
+    const cached = bySide[side];
+    if (cached?.signature === signature) return cached.view;
+    const kind = this.round === this.gd.hiddenRound && this.round !== this.gd.bossRound ? 'hidden' : 'boss';
+    let view = null;
+    try {
+      view = buildBossRoutePreview({
+        kind, side, players, stageId: this.stageId, rect: GEO.BOSS_RECT, modeId: this.modeId, round: this.round,
+        waveId: wave.templateId, spawns: wave.spawns, routes: wave.routes, enemyOverrides: wave.overrides,
+      }, this.ds);
+    } catch (e) { this.reportError('bossRoute', e); }
+    bySide[side] = { signature, view };
+    return view;
+  }
+
   /** nextEnemies preview for m.private. */
   nextEnemiesFor(ps) {
     if (!ps.alive) return [];
@@ -520,7 +555,12 @@ export class MatchViews {
     if (!g) return meta;
     const mate = this.bossMateView(ps);
     const own = units.map((u) => this._onBossHalf(u, g.side));
-    return { ...meta, kind: 'boss', rect: { ...GEO.BOSS_RECT }, side: g.side, units: mate ? [...own, ...mate.units] : own, ...(mate ? { mate: { playerId: mate.playerId, side: mate.side } } : {}) };
+    const bossRoute = this.bossRouteFor(ps);
+    return {
+      ...meta, kind: 'boss', rect: { ...GEO.BOSS_RECT }, side: g.side, units: mate ? [...own, ...mate.units] : own,
+      ...(mate ? { mate: { playerId: mate.playerId, side: mate.side } } : {}),
+      ...(bossRoute ? { bossRoute } : {}),
+    };
   }
 
   /** A prep UnitInfo (board, bench or temp row) placed on side 'L' | 'R' of the boss field (bossFieldPlacement). */

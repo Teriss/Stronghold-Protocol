@@ -45,6 +45,12 @@
   flex-wrap: wrap;
 }
 
+.ts-side-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .ts-header h1 {
   margin: 0;
   font-size: clamp(18px, 2vw, 24px);

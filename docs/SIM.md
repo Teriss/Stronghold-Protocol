@@ -280,6 +280,12 @@ the decorative crate on it — act1 m03 (11,5); test/sim/pathing.test.js). If cr
 and destroys it. FLY legs fly straight between checkpoints. `disappear` hides
 the enemy (untargetable, not in snapshots), `wait` pauses, `appear` teleports.
 
+`buildBossRoutePreview(opts, data)` in `server/sim/bossRoutePreview.js` traces a Boss wave's planned leader
+movement using the time-zero device grid and the same per-leg path points as combat. It takes the field's
+battle options plus the viewing `side` and returns stage coordinates or `null`. It resolves template mirror
+branches, omits persistently immobilized leaders and closes patrol loops using the shared reset index.
+The probe runs setup and spawn hooks for the preview without advancing time or touching the running match.
+
 **恐惧 movement** (`fear.js`, user playtest #6; PRTS 诱发移动 §恐惧): a feared enemy leaves its route. Each application
 (`Battle.applyStatus` stamps it on the buff) lists the 恐惧可达地块 — tile centres within 10 of where it was hit, inside the
 ±45° fan pointing away from the source, passable for its motion (obstacles or not), able to reach its goal, not the

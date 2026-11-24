@@ -1434,8 +1434,20 @@
 .ff { position: absolute; inset: 0; overflow: hidden; user-select: none; }
 .ff::before { content: ''; position: absolute; inset: 0; background: radial-gradient(70% 60% at 45% 48%, rgba(40, 60, 52, .35), transparent 70%); }
 .ff-board { position: absolute; }
-.ff-tile, .ff-slot, .ff-piece, .ff-unit { position: absolute; left: 0; top: 0; }
-.ff-tile { box-sizing: border-box; border: 1px solid rgba(0, 0, 0, .35); }
+.ff-tile, .ff-terrain, .ff-slot, .ff-piece, .ff-unit { position: absolute; left: 0; top: 0; }
+.ff-tile, .ff-terrain { box-sizing: border-box; border: 1px solid rgba(0, 0, 0, .35); }
+.ff-terrain { pointer-events: none; }
+.ff-boss-route { position: absolute; left: 0; top: 0; z-index: 1; overflow: visible; pointer-events: none; }
+.ff-boss-route__static { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ff-boss-route__flow, .ff-boss-route__pulse { display: none; }
+  .ff-boss-route__static { display: inline; }
+}
+.ff-tile--input { z-index: 1; border: 0; }
+.ff-tile--input.is-leader-hit { background-image: linear-gradient(rgba(255, 59, 48, .21), rgba(255, 59, 48, .21)); outline: 1px solid rgba(255, 59, 48, .92); outline-offset: -3px; }
+.ff-tile--input.is-leader-hit:not([data-drop]) { pointer-events: none; }
+.ff-unit--mate { pointer-events: none; }
+.ff-unit--leader { cursor: pointer; }
 .ff-tile--floor { background: linear-gradient(180deg, #3d4843, #333d38); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); }
 .ff-tile--high { background: linear-gradient(180deg, #5d6a64, #4a5651); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .12), inset 0 -4px 0 rgba(0, 0, 0, .25); }
 .ff-tile--lane { background: linear-gradient(180deg, #2b322f, #252c29); }

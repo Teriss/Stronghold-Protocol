@@ -11,11 +11,12 @@ import { storedLobbyVersion } from '../versions.js';
 import { loadBrowserSim, SIM_DATA_FILES } from '../battle/simLoader.js';
 import { makeRunner } from '../battle/localPlayback.js';
 import {
-  BATTLE_CAP, canPlaceInScene, chessRecordOf, clampBondLayers, defaultStageOf, editScene, emptyScene,
+  BATTLE_CAP, bossSideOf, canPlaceInScene, chessRecordOf, clampBondLayers, defaultStageOf, editScene, emptyScene,
   equipNeedsReplace, hasCombatants, legalTilesFor, prepViewState, sceneEquipment, sceneOperators,
   sceneSpec, sceneStages, sceneTerrain, stageBosses, stageCoordOf,
 } from '../battle/testSceneModel.js';
 import { Button, html, Icon } from '../ui/components.js';
+import { BossRouteToggle } from '../ui/bossRouteToggle.js';
 import { BondGlyph, Img } from '../ui/gameComponents.js';
 import { ToastHost, toast } from '../ui/toasts.js';
 import { chessAvatarUrl, enemyIconUrl, itemIconUrl } from '../ui/assetUrls.js';
@@ -270,6 +271,7 @@ function TestScene() {
   const [replace, setReplace] = useState(null);
   const [error, setError] = useState('');
   const [run, setRun] = useState(null);
+  const [bossRouteVisible, setBossRouteVisible] = useState(true);
   const [finished, setFinished] = useState(false);
   const [battleStatus, setBattleStatus] = useState(null);
   const [battleMeta, setBattleMeta] = useState(null);
@@ -315,6 +317,7 @@ function TestScene() {
         config = loaded.config;
         bosses = loaded.bosses;
       }
+      const { buildBossRoutePreview } = await import('/sim/bossRoutePreview.js');
       const stages = sceneStages(sim.raw.stages);
       if (!stages.length) throw new Error('default test-scene stage unavailable');
       const startStage = defaultStageOf(stages);
@@ -328,27 +331,46 @@ function TestScene() {
         setRun(null);
         setFinished(false);
         setError('');
-        setContent({ versionId: entry?.id || DEFAULT_VERSION, sim, stages, config, bosses });
+        setContent({ versionId: entry?.id || DEFAULT_VERSION, sim, stages, config, bosses, buildBossRoutePreview });
       }
     })().catch(() => { if (active) setBootError(true); });
     return () => { active = false; };
   }, [attempt, versionId]);
 
   const stage = content?.sim.raw.stages[scene.stageId];
+  const bossSide = bossSideOf(scene);
   const terrain = useMemo(() => (content && content.sim.raw.stages[scene.stageId]
-    ? sceneTerrain(content.sim, scene.stageId, scene.fieldMode)
-    : null), [content, scene.stageId, scene.fieldMode]);
+    ? sceneTerrain(content.sim, scene.stageId, scene.fieldMode, bossSide)
+    : null), [content, scene.stageId, scene.fieldMode, bossSide]);
   const bossInfo = useMemo(() => (content && scene.fieldMode === 'boss'
-    ? stageBosses(content.sim.raw, content.config, content.bosses, scene.stageId, scene.bossModeId)
-    : { modeId: null, difficulty: null, modes: [], bosses: [] }), [content, scene.fieldMode, scene.stageId, scene.bossModeId]);
+    ? stageBosses(content.sim.raw, content.config, content.bosses, scene.stageId, scene.bossModeId, bossSide)
+    : { modeId: null, difficulty: null, modes: [], bosses: [] }), [content, scene.fieldMode, scene.stageId, scene.bossModeId, bossSide]);
   const lookups = useMemo(() => content && ({
     getChess: id => content.sim.raw.chess[id],
     getToken: id => content.sim.raw.tokens[id],
     getItem: id => content.sim.raw.items[id],
   }), [content]);
   const view = viewState.view;
+  const { stageId, fieldMode, bossId, bossModeId } = scene;
+  const bossPreview = useMemo(() => {
+    if (content?.versionId !== versionId || fieldMode !== 'boss' || !bossId) return null;
+    const { sim, buildBossRoutePreview } = content;
+    const previewScene = { ...emptyScene(stageId, 'boss', { bossModeId, bossId, bossSide }) };
+    const spec = sceneSpec(sim, previewScene, null, content);
+    const leader = spec.spawns.find(spawn => spawn.tag === 'boss');
+    if (!leader) return null;
+    const start = spec.routes[leader.routeIndex]?.start;
+    return {
+      route: buildBossRoutePreview({ ...spec, side: bossSide }, sim.ds),
+      // The renderer already uses the upcoming leader's spawn tile for its prep standee and hit tiles.
+      nextEnemies: [{ enemyKey: leader.enemyKey, count: 1, boss: true, tag: 'boss', start }],
+    };
+  }, [content, versionId, stageId, fieldMode, bossId, bossModeId, bossSide]);
 
-  const prepPriv = useMemo(() => prepViewState(scene, nameOf, content?.sim?.raw || null), [scene, content, lang]);
+  const prepPriv = useMemo(() => ({
+    ...prepViewState(scene, nameOf, content?.sim?.raw || null),
+    ...(bossPreview ? { nextEnemies: bossPreview.nextEnemies } : null),
+  }), [scene, content, lang, bossPreview]);
   const displayBonds = useMemo(() => {
     const base = prepPriv.bonds || [];
     const live = battleStatus?.bondLayers;
@@ -506,7 +528,7 @@ function TestScene() {
   // Sync prep scene (operators, equipment area, bench pads, placed enemies) into the live renderer.
   useEffect(() => {
     if (!view || !content || !stage || run) return;
-    const stageKey = `${scene.stageId}:${scene.fieldMode}`;
+    const stageKey = `${scene.stageId}:${scene.fieldMode}:${bossSide}`;
     const stageChanged = stageAppliedRef.current !== stageKey;
     if (stageChanged) {
       view.setStage(stage);
@@ -519,11 +541,15 @@ function TestScene() {
       canPlace: (uid, target) => canPlaceInScene(live.current.scene, uid, target, { ...live.current.content, terrain: live.current.terrain }),
     });
     if (enteringPrep || stageChanged) {
-      if (scene.fieldMode === 'boss') view.setCamera('bossPrep', { side: 'L', shop: false, instant: true });
+      if (scene.fieldMode === 'boss') view.setCamera('bossPrep', { side: bossSide, shop: false, instant: true });
       else view.setCamera('prep', { shop: false, instant: true });
     }
     syncPieceDirs(view, prepPriv, live.current.facing?.uid ?? null);
-  }, [view, content, stage, scene, prepPriv, run, holdSeq]);
+  }, [view, content, stage, scene, bossSide, prepPriv, run, holdSeq]);
+
+  useEffect(() => {
+    view?.setBossRoute?.(!run && bossRouteVisible ? bossPreview?.route : null);
+  }, [view, stage, run, bossSide, bossPreview, bossRouteVisible]);
 
   // Clear stale selection/detail when a piece disappears or combat starts.
   useEffect(() => {
@@ -916,7 +942,8 @@ function TestScene() {
       const battle = content.sim.spec.createBattleFromSpec(run, content.sim.ds, { quiet: true });
       battleRef.current = battle;
       if (!run.spawns.length) battle.autoFinish = false;
-      const runStageKey = `${run.stageId}:${isBossRun ? 'boss' : 'normal'}`;
+      const runSide = isBossRun && run.players?.[0]?.side === 'R' ? 'R' : 'L';
+      const runStageKey = `${run.stageId}:${isBossRun ? `boss:${runSide}` : 'normal'}`;
       if (stageAppliedRef.current !== runStageKey) {
         view.setStage(content.sim.raw.stages[run.stageId]);
         stageAppliedRef.current = runStageKey;
@@ -924,7 +951,7 @@ function TestScene() {
       const meta = battle.fieldMeta();
       setBattleMeta(meta);
       view.enterBattle(meta);
-      view.setCamera(isBossRun ? 'boss' : 'normal', { rect: run.rect, instant: true });
+      view.setCamera(isBossRun ? 'boss' : 'normal', isBossRun ? { rect: run.rect, side: runSide, half: true, instant: true } : { rect: run.rect, instant: true });
       view.raw.setLocalFeed?.({ on: true, speed: 1 });
       runner = makeRunner(battle, { cap: BATTLE_CAP, onFrame: (snap, events) => {
         if (Array.isArray(snap.units)) {
@@ -1033,6 +1060,15 @@ function TestScene() {
     if (edit({ type: 'selectBoss', bossId })) audio.sfx('click', { volume: 0.4 });
   };
 
+  const setBossSide = nextSide => {
+    if (run || scene.fieldMode !== 'boss' || nextSide === bossSide) return;
+    if (facing) cancelFacing();
+    setArmed(null);
+    setSel(null);
+    setDetail(null);
+    if (edit({ type: 'setBossSide', side: nextSide })) audio.sfx('click', { volume: 0.4 });
+  };
+
   const openBond = (bondId, source = 'strip') => {
     audio.sfx('click', { volume: 0.4 });
     setBondOpen(cur => (cur?.id === bondId && cur?.source === source ? null : { id: bondId, source }));
@@ -1139,6 +1175,16 @@ function TestScene() {
             ${content.stages.map(s => html`<option key=${`${s.id}:boss`} value=${`${s.id}:boss`}>${`${data.lookup('stages', s.id)?.name || s.name} · ${t('最终攻势')}`}</option>`)}
           </optgroup>
         </select></label>
+        ${!run && scene.fieldMode === 'boss' ? html`<div class="ts-side-switch" role="group" aria-label=${t('战场半区')}>
+          <${Button} size="sm" variant=${bossSide === 'L' ? 'secondary' : 'ghost'} active=${bossSide === 'L'}
+            data-testid="test-scene-side-L" aria-pressed=${String(bossSide === 'L')}
+            onClick=${() => setBossSide('L')}>${t('左半场')}<//>
+          <${Button} size="sm" variant=${bossSide === 'R' ? 'secondary' : 'ghost'} active=${bossSide === 'R'}
+            data-testid="test-scene-side-R" aria-pressed=${String(bossSide === 'R')}
+            onClick=${() => setBossSide('R')}>${t('右半场')}<//>
+        </div>` : null}
+        ${!run && view && bossPreview?.route ? html`<${BossRouteToggle} visible=${bossRouteVisible}
+          onToggle=${() => setBossRouteVisible(visible => !visible)} />` : null}
         ${run ? html`<${Button} data-testid="test-scene-stop" onClick=${stop}>${finished ? t('返回布置') : t('停止战斗')}<//>`
           : html`<${Button} variant="primary" icon="play" disabled=${!hasCombatants(scene)} data-testid="test-scene-start" onClick=${start}>${t('开始战斗')}<//>`}
       </div>` : null}

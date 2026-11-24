@@ -77,6 +77,7 @@ bump; clients without these controls keep their existing messages.
   bonds: [ { bondId, count, active, tier, layers, harmony? /* 调和's +1 is in count, §21.26 */, thresholds, countsHand, effectId? } ],   // sorted: active first, then layers desc; an `off` entry (a bond the mode never activates, with members: count only, never active — the strip's grey 本局禁用 disc, bondsMeta.offBondCounts) comes last. `effectId` only when a 规程 command replaces that bond's effect (the same id the battle input uses). A mapped bond with no members is an extra `{ count: 0, active: false, tier: 0, layers: 0, effectId }` row (not `off`); the strip hides it. Default seasons omit `effectId` and that row.
   effects: [ { id, name, desc, iconKind: 'band'|'choice'|'team'|'item'|'garrison', iconId, counter?, counterText?, progress?: {current,total}, roundProgress?: {current,total} /* read-only preparation counters; a bounty's counterText: 还剩 N 场作战, §20.6 */ } ],
   nextEnemies: [ { enemyKey, count, tag, start? } ],   // preview of the upcoming round's wave (after waves.js generation); `start` = a leader's spawn tile [row, col] on the boss field (the boss-field prep shows it standing there, community report #12)
+  bossRoute?: { paths: [{ kind, points: [[row, col], ...] }], marks: [{ kind, at: [row, col] }] }, // Boss prep (§37.242)
   loadout: { [baseChessId]: { skill, module } },   // §16: the effective loadout (chess not listed: defaults)
   standIns: [ baseChessId ],   // 0.2.0 补位: the chess this player fields as their stand-ins in this match (sorted; [] = everything owned)
   diy: { [slotBaseId]: { charId, skillIndex, uniEquipId } },   // 0.2.0 自选编队: this player's picks in this match ({} = none)
@@ -89,6 +90,10 @@ Piece = { uid, kind: 'chess'|'item'|'token', id, golden: bool, tier, items: [ { 
 `m.public.players[].status` ∈ `'acting' | 'ready' | 'deciding' | 'combat' | 'done' | 'helping' | 'left' | 'dead'`.
 `m.public.fields[]`: `{ fieldId, kind: 'normal'|'unite'|'boss'|'hidden', players: [playerId…], live: bool }` — `fieldId` is `'n:<playerId>'` for normal fields, `'u'` for the unite field, `'b1'`/`'b2'` for boss fields. Clients `g.watch` a fieldId; default = own field (or the unite/boss field they are in).
 `flags` bitmask: 1 blocked, 2 stunned, 4 frozen, 8 stealth (an ally's 隐匿 or 迷彩 — §20.2; an enemy's only while its 隐匿 is on: not blocked, not revealed — drawn solid otherwise, §21.4), 16 skillActive, 32 shielded, 64 invulnerable, 128 cold, 256 sleep, 512 flying.
+A Boss prep `bossRoute` belongs to the recipient's side. A prep scout `m.field` can carry the same optional field
+for the watched player's side. `paths[].kind` is `approach`, `patrol` or `travel`. `marks[].kind` is `waypoint`,
+`wait` or `portal`. All coordinates are in stage space. An omitted field leaves the route overlay hidden.
+
 `anim` small int: 0 idle, 1 move, 2 attack, 3 skill, 4 die, 5 stun, 6 deploy.
 
 ### 8.4 Content identity (0.3.0, the plugin system — §32)

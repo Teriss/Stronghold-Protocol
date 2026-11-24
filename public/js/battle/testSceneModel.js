@@ -101,13 +101,14 @@ export function sceneOperators(raw) {
   return out;
 }
 
-export function emptyScene(stageId = DEFAULT_STAGE, fieldMode = 'normal', { bossModeId = null, bossId = null } = {}) {
+export function emptyScene(stageId = DEFAULT_STAGE, fieldMode = 'normal', { bossModeId = null, bossId = null, bossSide = 'L' } = {}) {
   const boss = fieldMode === 'boss';
   return {
     stageId,
     fieldMode: boss ? 'boss' : 'normal',
     bossModeId: boss ? bossModeId : null,
     bossId: boss ? bossId : null,
+    bossSide: boss && bossSide === 'R' ? 'R' : 'L',
     bondLayers: {},
     hand: Array(GEO.HAND_SIZE).fill(null),
     temp: Array(GEO.TEMP_SIZE).fill(null),
@@ -117,8 +118,12 @@ export function emptyScene(stageId = DEFAULT_STAGE, fieldMode = 'normal', { boss
   };
 }
 
+export function bossSideOf(scene) {
+  return scene?.fieldMode === 'boss' && scene?.bossSide === 'R' ? 'R' : 'L';
+}
+
 export function deployFieldOfScene(scene) {
-  return scene?.fieldMode === 'boss' ? 'bossL' : 'normal';
+  return scene?.fieldMode === 'boss' ? (bossSideOf(scene) === 'R' ? 'bossR' : 'bossL') : 'normal';
 }
 
 export function stageCoordOf(scene, row, col) {
@@ -326,8 +331,42 @@ export function stageBossModes(raw, config, stageId) {
   return out;
 }
 
+const BOSS_MID_COL = (GEO.BOSS_RECT.c0 + GEO.BOSS_RECT.c1) / 2;
+
+function resolveSideTemplate(raw, templateId, side) {
+  if (side === 'R' && templateId && /_s$/.test(templateId)) {
+    const pairId = templateId.replace(/_s$/, '');
+    if (raw?.waves?.[pairId]) return { templateId: pairId, tpl: raw.waves[pairId], paired: true };
+  }
+  const tpl = templateId ? raw?.waves?.[templateId] : null;
+  return { templateId, tpl, paired: Boolean(templateId && !/_s$/.test(templateId)) };
+}
+
+function templateEntriesForSide(tpl, side) {
+  const list = Array.isArray(tpl?.spawns) ? tpl.spawns : [];
+  const routes = Array.isArray(tpl?.routes) ? tpl.routes : [];
+  const hasRightEscorts = side === 'R' && list.some((s) => {
+    if (!s || (s.action && String(s.action).toUpperCase() !== 'SPAWN')) return false;
+    if (s.tag === 'boss' || s.tag === 'part') return false;
+    const end = routes[Number.isInteger(s.routeIndex) ? s.routeIndex : 0]?.end;
+    return Array.isArray(end) && end[1] > BOSS_MID_COL;
+  });
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (!s || (s.action && String(s.action).toUpperCase() !== 'SPAWN')) continue;
+    if (hasRightEscorts && s.tag !== 'boss' && s.tag !== 'part') {
+      const end = routes[Number.isInteger(s.routeIndex) ? s.routeIndex : 0]?.end;
+      if (Array.isArray(end) && end[1] < BOSS_MID_COL) continue;
+    }
+    out.push({ s, actionIndex: i });
+  }
+  return out;
+}
+
 /** Official selectable bosses for a stage and difficulty, with their real wave templates and HP pools. */
-export function stageBosses(raw, config, bosses, stageId, preferredModeId = null) {
+export function stageBosses(raw, config, bosses, stageId, preferredModeId = null, bossSide = 'L') {
+  const side = bossSide === 'R' ? 'R' : 'L';
   const modes = stageBossModes(raw, config, stageId);
   const fallbackModeId = defaultModeOf(config);
   const mode = modes.find(m => m.modeId === preferredModeId)
@@ -347,14 +386,13 @@ export function stageBosses(raw, config, bosses, stageId, preferredModeId = null
         || rec.templates?.[fallbackModeId]
         || Object.entries(rec.templates || {}).find(([k]) => k.startsWith('mode_single_'))?.[1]
         || Object.values(rec.templates || {})[0];
-      const templateId = tplInfo?.template || null;
-      const tpl = templateId ? raw?.waves?.[templateId] : null;
+      const baseTemplateId = tplInfo?.template || null;
+      const { templateId, tpl } = resolveSideTemplate(raw, baseTemplateId, side);
       if (!tpl) continue;
       const round = Number.isInteger(tplInfo?.round) ? tplInfo.round : (hidden ? 15 : 14);
       const escorts = [];
       const counts = new Map();
-      for (const s of tpl.spawns || []) {
-        if (!s || (s.action && String(s.action).toUpperCase() !== 'SPAWN')) continue;
+      for (const { s } of templateEntriesForSide(tpl, side)) {
         const key = s.key ?? s.enemyKey;
         if (!key || key === ACLOON || s.tag === 'boss') continue;
         const n = Math.max(1, Math.min(50, Number.isInteger(s.count) ? s.count : 1));
@@ -389,17 +427,16 @@ export function stageBosses(raw, config, bosses, stageId, preferredModeId = null
 /** Build the exact official Boss wave spawns, routes, overrides, scale, and HP pool for a selected boss. */
 export function bossWaveConfig(raw, config, bosses, scene) {
   if (!scene || scene.fieldMode !== 'boss' || !scene.bossId || !bosses) return null;
-  const info = stageBosses(raw, config, bosses, scene.stageId, scene.bossModeId);
+  const side = bossSideOf(scene);
+  const info = stageBosses(raw, config, bosses, scene.stageId, scene.bossModeId, side);
   const picked = info.bosses.find(b => b.bossId === scene.bossId);
   if (!picked) return null;
   const tpl = raw?.waves?.[picked.templateId];
   if (!tpl) return null;
   const scale = enemyScaleOf(config, info.modeId, picked.round);
+  const routes = Array.isArray(tpl.routes) ? tpl.routes.slice() : [];
   const spawns = [];
-  const list = Array.isArray(tpl.spawns) ? tpl.spawns : [];
-  for (let i = 0; i < list.length; i++) {
-    const s = list[i];
-    if (!s || (s.action && String(s.action).toUpperCase() !== 'SPAWN')) continue;
+  for (const { s, actionIndex } of templateEntriesForSide(tpl, side)) {
     const key = s.key ?? s.enemyKey;
     if (typeof key !== 'string' || key === ACLOON || !raw?.enemies?.[key]) continue;
     const tag = s.tag ?? null;
@@ -407,8 +444,17 @@ export function bossWaveConfig(raw, config, bosses, scene) {
     const isPart = tag === 'part';
     const count = Math.max(1, Math.min(50, Number.isInteger(s.count) ? s.count : 1));
     const interval = Math.max(0, Number(s.interval) || 0);
-    const time = Math.max(0, Number(s.time) || 0);
-    const routeIndex = Number.isInteger(s.routeIndex) ? s.routeIndex : 0;
+    let time = Math.max(0, Number(s.time) || 0);
+    let routeIndex = Number.isInteger(s.routeIndex) ? s.routeIndex : 0;
+    if (isBoss && side === 'R') {
+      const mirrorBranch = tpl.branches?.boss_battle_multi_player?.[0]?.find(b => (b.key ?? b.enemyKey) === key);
+      const extraRoute = mirrorBranch ? tpl.extraRoutes?.[mirrorBranch.routeIndex] : null;
+      if (extraRoute) {
+        routeIndex = routes.length;
+        routes.push(extraRoute);
+        time = Math.max(0, Number(mirrorBranch.time ?? time) || 0);
+      }
+    }
     const slot = s.slot || enemySlotClass(raw, key);
     const mods = isBoss
       ? { atkMul: scale.atkMul, speedMul: scale.speedMul, slot }
@@ -420,7 +466,7 @@ export function bossWaveConfig(raw, config, bosses, scene) {
       count,
       interval: count > 1 ? interval : 0,
       mods,
-      actionIndex: i,
+      actionIndex,
     };
     if (tag) spec.tag = tag;
     if (s.unharmful || isPart) spec.countInTotal = false;
@@ -432,7 +478,7 @@ export function bossWaveConfig(raw, config, bosses, scene) {
     difficulty: info.difficulty,
     scale,
     spawns,
-    routes: Array.isArray(tpl.routes) ? tpl.routes : [],
+    routes,
     overrides: tpl.overrides && typeof tpl.overrides === 'object' ? tpl.overrides : {},
   };
 }
@@ -461,9 +507,11 @@ export function sceneSpec(sim, scene, goal, { config = null, bosses = null } = {
   const versionId = versionOfData({ config: cfg || sim.raw?.config });
   const versionOpt = versionId !== DEFAULT_VERSION ? { version: versionId } : null;
   const fallbackMode = defaultModeOf(cfg);
+  const side = bossSideOf(scene);
   const playerInput = {
     playerId: PLAYER_ID,
-    side: 'L',
+    side,
+    ...(boss && side === 'R' ? { colOffset: 8 } : null),
     seat: 0,
     bonds: sceneBondSnapshot(sim.raw, scene),
     units: scene.board.map(p => unitSpecOf(sim.raw, p)),
@@ -533,16 +581,17 @@ export function sceneSpec(sim, scene, goal, { config = null, bosses = null } = {
 }
 
 /** Read the time-zero terrain from the same simulation that will execute the scene. */
-export function sceneTerrain(sim, stageId, fieldMode = 'normal') {
+export function sceneTerrain(sim, stageId, fieldMode = 'normal', bossSide = 'L') {
   const mode = fieldMode === 'boss' ? 'boss' : 'normal';
-  const probe = sim.spec.createBattleFromSpec(sceneSpec(sim, emptyScene(stageId, mode)), sim.ds, { quiet: true });
+  const side = mode === 'boss' && bossSide === 'R' ? 'R' : 'L';
+  const probe = sim.spec.createBattleFromSpec(sceneSpec(sim, emptyScene(stageId, mode, { bossSide: side })), sim.ds, { quiet: true });
   probe.start();
   const { grid } = probe;
   const ends = grid.specialTiles('end');
-  const goal = (mode === 'boss' ? ends.find(([, c]) => c <= 10) : null) || ends[0];
+  const goal = (mode === 'boss' ? ends.find(([, c]) => (side === 'R' ? c > BOSS_MID_COL : c <= BOSS_MID_COL)) : null) || ends[0];
   const reserved = new Set(probe.units.filter(u => u.alive && u.deployed && grid.inRect(u.y, u.x))
     .map(u => grid.key(u.y, u.x)));
-  return { grid, goal, reserved, fieldMode: mode, deployField: mode === 'boss' ? 'bossL' : 'normal' };
+  return { grid, goal, reserved, fieldMode: mode, deployField: mode === 'boss' ? (side === 'R' ? 'bossR' : 'bossL') : 'normal' };
 }
 
 const at = (list, row, col) => list.find(p => p.row === row && p.col === col);
@@ -910,6 +959,12 @@ export function editScene(scene, action, { sim, terrain, config, bosses = null }
         return { error: t('该地图不可选择此 Boss') };
       }
       return { scene: { ...scene, bossModeId: info.modeId, bossId: nextBossId, enemies: [] } };
+    }
+    case 'setBossSide': {
+      if (scene.fieldMode !== 'boss') return { error: t('当前不是 Boss 战场景') };
+      const nextSide = action.side === 'R' ? 'R' : 'L';
+      if (nextSide === bossSideOf(scene)) return { scene };
+      return { scene: { ...scene, bossSide: nextSide } };
     }
     case 'setBondLayers': {
       const bond = sim.raw.bonds?.[action.bondId];

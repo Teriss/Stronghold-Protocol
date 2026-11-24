@@ -144,3 +144,65 @@ describe('the boss round\'s prep: the pair together, the frames, a watcher\'s bo
     }
   });
 });
+
+test('paired Boss prep renders only the assigned patrol route on each client',
+  { skip: !(process.env.SP_E2E === '1' && hasChrome()) && 'set SP_E2E=1 (Chrome)', timeout: 6 * 60 * 1000 }, async (t) => {
+    const [{ startServer }, { Match }, { DEFAULT_VERSION }] = await Promise.all([
+      import('../../server/index.js'), import('../../server/match/Match.js'), import('../../shared/versions.js'),
+    ]);
+    class PatrolMatch extends Match {
+      startRound(round) {
+        if (round !== 1) return super.startRound(round);
+        this.bossId = 'boss_2';
+        return super.startRound(this.gd.bossRound);
+      }
+
+      _planBossWaves() {
+        const players = this.alivePlayers();
+        if (!this.bossPairs) this.bossPairs = [false, true].map(bot => players.filter(p => p.isBot === bot).map(p => p.playerId));
+        return super._planBossWaves();
+      }
+    }
+    const srv = await startServer({
+      host: '127.0.0.1', port: 0, quiet: true, MatchClass: PatrolMatch, assetIndex: false,
+      versions: { enabled: [DEFAULT_VERSION], default: DEFAULT_VERSION },
+    });
+    const P = (await import('puppeteer-core')).default;
+    let host, guest;
+    try {
+      ({ host, guest } = await coopAtBoss(P, srv.url, 'boss-route'));
+      const toggle = '[data-testid="boss-route-toggle"]';
+      for (const client of [host, guest]) {
+        const { page } = client;
+        await page.waitForSelector(`${toggle}[aria-pressed="true"]`, { visible: true });
+        await page.waitForFunction(() => globalThis.__SP_VIEW__?.raw?.debug?.bossRoute?.visible === true);
+        const { side, waypoint } = await page.evaluate(() => {
+          const s = globalThis.__SP__.store.get();
+          const pair = s.match.public.bossPairs.find(ids => ids.includes(s.me.playerId));
+          return {
+            side: pair.indexOf(s.me.playerId) === 0 ? 'left' : 'right',
+            waypoint: s.match.private.bossRoute.marks.find(m => m.kind === 'waypoint')?.at,
+          };
+        });
+        assert.deepEqual(waypoint, side === 'left' ? [3, 9] : [3, 11]);
+        await client.shot(side);
+      }
+      t.diagnostic('Captured both prepared patrols');
+      await host.click(toggle);
+      await host.page.waitForSelector(`${toggle}[aria-pressed="false"]`);
+      await host.page.waitForFunction(() => globalThis.__SP_VIEW__?.raw?.debug?.bossRoute?.visible === false);
+      assert.equal(await guest.page.evaluate(() => globalThis.__SP_VIEW__.raw.debug.bossRoute.visible), true);
+      await host.click(toggle);
+      await host.page.waitForFunction(() => globalThis.__SP_VIEW__?.raw?.debug?.bossRoute?.visible === true);
+      await host.click('.enemybtn');
+      await host.page.waitForSelector('.gm.is-pen');
+      await host.page.waitForFunction(() => globalThis.__SP_VIEW__?.raw?.debug?.bossRoute?.visible === false);
+      await host.click('.enemybtn');
+      await host.page.waitForFunction(() => globalThis.__SP_VIEW__?.raw?.debug?.bossRoute?.visible === true);
+      assert.deepEqual(problemsOf([host, guest]).filter(line => line.startsWith('pageerror:')), []);
+    } finally {
+      await host?.close();
+      await guest?.close();
+      await srv.close();
+    }
+  });

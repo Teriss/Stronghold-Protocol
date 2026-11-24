@@ -1146,6 +1146,10 @@ PREP ready/acting · COMBAT/boss combat/done · UNITE helping/done · others don
 (+ the player's bounty enemies, tag `bounty`; boss rounds: the player's boss field, tag `boss` — the leader's entry with its
 spawn tile `start`, where the boss-field prep shows it —, + its bounties).
 
+Final Assault and Hidden Core preparation also carry an optional `bossRoute` in `m.private` and the scouted prep
+`m.field`. The preview uses the prepared group wave, the player's side and the field's starting device state.
+It contains stage-coordinate polylines with semantic marks. Combat resolves movement from the wave itself.
+
 Bond layers in the views (DESIGN §20.15): from the end of COMBAT (`_finishCombat`, every normal result in) until SETTLE,
 `m.private bonds` and `m.public players[].bonds` add the finished battle's IN_BATTLE gains (`PlayerState.pendingLayerGains`
 = the result's `layerGains`; `bondsMeta.bondsWithGains`: floored, at most up to `BOND_LAYER_CAP`, like the settlement), so

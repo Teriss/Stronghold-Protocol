@@ -270,3 +270,66 @@ test('a test scene with missing data can retry in place and runs simplified rend
       await server.stop();
     }
   });
+
+test('Boss route preview follows selection, visibility and combat state in the simplified field',
+  { skip: !ENABLED && 'set SP_E2E=1 (Chrome)', timeout: 120000 }, async () => {
+    const { startServer } = await import('../../server/index.js');
+    const server = await startServer({ host: '127.0.0.1', port: 0, quiet: true, assetIndex: false });
+    const puppeteer = (await import('puppeteer-core')).default;
+    const client = new Client(puppeteer, server.url, 'Boss route', { w: 1280, h: 850, prefix: 'boss-route-scene' });
+    try {
+      await client.open();
+      const { page } = client;
+      const route = '.ff-boss-route';
+      const toggle = '[data-testid="boss-route-toggle"]';
+      await page.goto(`${server.url}/test-scene.html?render=fallback`);
+      await page.waitForSelector(`${EDITOR} .ff-tile`);
+      await page.select(SELECT, 'act1autochess_m01:boss');
+      await page.click('.ts-kinds [data-kind="enemy"]');
+      await page.waitForSelector('[data-boss="boss_1"]');
+      assert.equal(await page.$(toggle), null, 'no route before selecting a Boss');
+      await page.click('[data-boss="boss_1"]');
+      await page.waitForSelector('[data-testid="test-scene-boss-summary"]');
+      assert.equal(await page.$(toggle), null, 'a stationary leader has no route');
+      await page.click('[data-boss="boss_2"]');
+      await page.waitForSelector(`${toggle}[aria-pressed="true"]`);
+      await page.waitForSelector(route, { visible: true });
+      await client.shot('patrol');
+      // Switch to the right half of the Boss field and confirm the route moves to the right half.
+      const leftMarkX = await page.$eval(`${route} .ff-boss-route__waypoint circle`, el => Number(el.getAttribute('cx')));
+      await page.click('[data-testid="test-scene-side-R"]');
+      await page.waitForSelector('[data-testid="test-scene-side-R"][aria-pressed="true"]');
+      await page.waitForFunction((sel, lx) => {
+        const c = document.querySelector(`${sel} .ff-boss-route__waypoint circle`);
+        return c && Number(c.getAttribute('cx')) > lx + 20;
+      }, {}, route, leftMarkX);
+      await client.shot('patrol-right');
+      await page.click('[data-testid="test-scene-side-L"]');
+      await page.waitForSelector('[data-testid="test-scene-side-L"][aria-pressed="true"]');
+      await client.click(toggle);
+      await page.waitForSelector(`${toggle}[aria-pressed="false"]`);
+      await page.waitForSelector(route, { hidden: true });
+      await page.focus(toggle);
+      await page.keyboard.press('Space');
+      await page.waitForSelector(route, { visible: true });
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      assert.equal(await page.$eval(`${route}__flow`, el => getComputedStyle(el).display), 'none');
+      await page.setViewport({ width: 844, height: 390 });
+      await page.waitForFunction(sel => document.querySelector(sel)?.getBoundingClientRect().width < 650, {}, route);
+      await page.waitForSelector(route, { visible: true });
+      await page.setViewport({ width: 1280, height: 850 });
+      await client.click(START);
+      await page.waitForSelector(COMBAT);
+      await page.waitForSelector(route, { hidden: true });
+      assert.equal(await page.$(toggle), null);
+      await client.click(STOP);
+      await page.waitForSelector(route, { visible: true });
+      await page.select(SELECT, 'act1autochess_m01');
+      await page.waitForSelector(route, { hidden: true });
+      assert.equal(await page.$(toggle), null);
+      assert.deepEqual(client.problems.filter(line => line.startsWith('pageerror:')), []);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });

@@ -311,9 +311,23 @@ export function install(battle) {
 }
 export function registerMeta() {}
 
+// Same split as enemies.js: regulation leaders are absent from the default table.
+const bossKitOf = (key) => BOSS_KITS[key] || REGULATION_BOSS_KITS[key];
+
+/** Whether the enemy's route is the template route that installs the patrol hook. */
+export function isBossPatrolRoute(b, e, tpl = templateOf(b)) {
+  if (typeof bossKitOf(e.defId) !== 'function') return false;
+  const raw = rawRouteOf(b, e, tpl);
+  return Boolean(Array.isArray(raw?.steps) && raw.steps.some((s) => s && s.t === 'patrol'));
+}
+
+/** The leg index at which the patrol hook resets to the first leg. */
+export function patrolResetAt(legs) {
+  return Array.isArray(legs) && legs.length >= 2 ? legs.length - 1 : null;
+}
+
 function onSpawn(b, e) {
-  // Same split as enemies.js: regulation leaders are not spread into BOSS_KITS (they are absent from the default table).
-  const kit = BOSS_KITS[e.defId] || REGULATION_BOSS_KITS[e.defId];
+  const kit = bossKitOf(e.defId);
   if (typeof kit !== 'function') return;
   if (SELF_BOUND.includes(e.defId)) b.addBuff(e, { key: 'boss:selfBound', persist: true, flags: { noMove: true, selfBound: true, unblockable: true } });
   const tpl = templateOf(b);
@@ -321,10 +335,7 @@ function onSpawn(b, e) {
   let list = [];
   try { list = kit(ab, e, b, tpl) || []; } catch (err) { b._handlerError('content:bosses', e, err); }
   attach(b, e, list);
-  // patrol loop for leaders / parts
-  const raw = rawRouteOf(b, e, tpl);
-  if (raw && Array.isArray(raw.steps) && raw.steps.some((s) => s && s.t === 'patrol')) attach(b, e, [patrolLoop()]);
-  // mirrored leader for 2 players (boss_battle_multi_player)
+  if (isBossPatrolRoute(b, e, tpl)) attach(b, e, [patrolLoop()]);
   if (e.isBoss || e.tag === 'boss') mirror(b, e, tpl);
 }
 
@@ -332,25 +343,31 @@ function patrolLoop() {
   return {
     tick(b, e) {
       const R = e.route;
-      if (!R || !Array.isArray(R.legs) || R.legs.length < 2) return;
-      if (R.legIdx >= R.legs.length - 1) { R.legIdx = 0; R.pts = null; R.waitLeft = null; }
+      const resetAt = patrolResetAt(R?.legs);
+      if (resetAt != null && R.legIdx >= resetAt) { R.legIdx = 0; R.pts = null; R.waitLeft = null; }
     },
   };
 }
 
+/** Template spawn intents for the right-hand copy. The spawn-time live-body cap is applied by the caller. */
+export function bossMirrorSpawns(b, e, tpl = templateOf(b)) {
+  if (b.data.raw?.config?.version?.rules?.bossMirrorShare === false || b.opts?.bossMirror === false || b.players.length < 2 || e.mem.mirror) return null;
+  const br = tpl?.branches?.boss_battle_multi_player;
+  if (!Array.isArray(br) || !br.length || typeof bossKitOf(e.defId) !== 'function') return null;
+  return (br[0] || []).filter((s) => (s.key ?? s.enemyKey) === e.defId).map((s) => ({
+    key: e.defId, time: s.time ?? 0, route: tpl.extraRoutes?.[s.routeIndex],
+  }));
+}
+
 function mirror(b, e, tpl) {
-  if (b.data.raw?.config?.version?.rules?.bossMirrorShare === false) return;
   const st = stOf(b);
-  const br = tpl && tpl.branches && tpl.branches.boss_battle_multi_player;
-  if (!Array.isArray(br) || !br.length || st.mirrored.has(e.defId) || (b.opts && b.opts.bossMirror === false)) return;
-  if (b.players.length < 2 || e.mem.mirror) return;
+  if (st.mirrored.has(e.defId)) return;
+  const spawns = bossMirrorSpawns(b, e, tpl);
+  if (!spawns) return;
   st.mirrored.add(e.defId);
-  for (const s of br[0] || []) {
-    const key = s.key ?? s.enemyKey;
-    if (key !== e.defId) continue;
-    b.after(Math.max(0, (s.time ?? 0) - b.time), () => {
+  for (const { key, time, route } of spawns) {
+    b.after(Math.max(0, time - b.time), () => {
       if (b.aliveEnemies().filter((o) => o.defId === key && o.isBoss).length >= 2) return; // the match already did it
-      const route = tpl.extraRoutes && tpl.extraRoutes[s.routeIndex];
       const u = b.spawnEnemy(key, { route: route || undefined, tag: 'boss', mods: e.mods });
       if (u) u.mem.mirror = true;
     });

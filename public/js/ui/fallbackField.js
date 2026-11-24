@@ -12,10 +12,8 @@
 // scouted teammate's m.field { prep: true, nextEnemies }) placed
 // like the official client and exactly where the render engine puts them (gameLogic penPlacement = render/pen.js
 // layoutPen: rows 14–18 × cols 7–13, upper gate rows 17–18, lower gate 14–15, row 16 empty, ≤ 50 models, ≤ 3 per tile);
-// tapping one emits pieceClick { enemyKey, preview: true, unit: { side: 'enemy', defId } }. setCamera('bossPrep') (the
-// Final Assault prep) keeps the own board layout here — every coordinate the UI exchanges is a board coordinate anyway —
-// but draws the tiles of the player's half of the boss field (gameLogic fieldTile, the legality the highlights use: act2
-// m01's fence tiles are floor there, not the normal field's walls; user playtest #5 item 7).
+// tapping one emits pieceClick { enemyKey, preview: true, unit: { side: 'enemy', defId } }. Boss prep draws the
+// stage's boss field, mapping the player's pieces and interactable tiles through the shared prep transform.
 // A tap on the ground itself emits tileClick { row, col } like render/app.js does, so a special terrain tile
 // explains itself on this board too (GitHub issue #184).
 
@@ -25,7 +23,12 @@ import { render } from '../../vendor/preact.module.js';
 import { html, TierChip } from './components.js';
 import { GEO } from '../../../shared/constants.js';
 import { chessAvatarUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl } from './assetUrls.js';
-import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile, ownStandIn, ownDiyRecord, diyRecordFor } from './gameLogic.js';
+import { tileKey, hasFlag, UF, penPlacement, PEN, ownStandIn, ownDiyRecord, diyRecordFor } from './gameLogic.js';
+import { BOSS_DISP_MAX_ROW, IDENTITY, bossPrepField, leaderStand } from '../render/prepfield.js';
+import { buildBossRoute } from '../render/bossRoute.js';
+import { FallbackBossRoute } from './fallbackBossRoute.js';
+import { hitTiles } from '../render/pick.js';
+import { RANGE_GROUPS } from '../render/app/tune.js';
 import { t } from '../../../shared/i18n.js';
 import { ownerSkin } from './skins.js';
 
@@ -114,8 +117,8 @@ export function createFallbackView(host, opts = {}) {
   host.appendChild(root);
 
   const st = {
-    stage: null, camera: 'prep', rect: { ...GEO.NORMAL_RECT }, side: 'L', deployField: 'normal',
-    mode: 'prep', priv: null, editable: false, canPlace: null,
+    stage: null, camera: 'prep', rect: { ...GEO.NORMAL_RECT }, prepXf: IDENTITY, cameraBeforePen: null, shop: true,
+    mode: 'prep', priv: null, editable: false, canPlace: null, bossRouteSource: null, bossRoute: null,
     field: null, units: new Map(), snapUnits: new Map(), highlight: new Map(), hlGroups: new Map(), held: new Map(), dirs: new Map(),
     drag: null, hoverTarget: null, floats: [], settings: { damageNumbers: true, officialDamageNumbers: false, ...(opts.settings || {}) },
     size: { w: 0, h: 0 }, destroyed: false, pen: [], myId: null, players: [],
@@ -134,6 +137,9 @@ export function createFallbackView(host, opts = {}) {
   };
 
   // ---- geometry ----------------------------------------------------------------------------------------
+  const bossScout = () => st.mode === 'battle' && st.field?.prep && (st.field.kind === 'boss' || st.field.kind === 'hidden');
+  const bossBoard = () => st.camera === 'bossPrep' || st.camera === 'boss' && bossScout();
+
   function layout() {
     const w = st.size.w || host.clientWidth || 1;
     const h = st.size.h || host.clientHeight || 1;
@@ -141,24 +147,30 @@ export function createFallbackView(host, opts = {}) {
     const r = st.rect;
     const cols = r.c1 - r.c0 + 1;
     const prep = st.mode === 'prep';
-    const hasTemp = prep && (equipHand() || (Array.isArray(st.priv?.temp) && st.priv.temp.some(Boolean)));
-    const rows = r.r1 - r.r0 + 1 + (prep ? 2.6 + (hasTemp ? 1.2 : 0) : 0); // + gap + hand (+ temp) rows
-    // keep clear of the HUD: top bar + bond strip above, shop bar (prep) / switcher (combat) below
+    const boss = bossBoard();
+    const separateBench = prep && !boss;
+    const hasTemp = separateBench && (equipHand() || (Array.isArray(st.priv?.temp) && st.priv.temp.some(Boolean)));
+    const rows = r.r1 - r.r0 + 1 + (separateBench ? 2.6 + (hasTemp ? 1.2 : 0) : 0);
+    // Keep clear of the HUD. Boss prep includes the bench in its stage rows.
     const top0 = rem * 2.0;
-    const bottom0 = h - rem * (prep ? 3.3 : 1.1);
-    const availW = w * (prep ? 0.58 : 0.8);
+    const bottom0 = h - rem * (prep && (!boss || st.shop !== false) ? 3.3 : 1.1);
+    const availW = w * (boss ? 0.76 : prep ? 0.58 : 0.8);
     const availH = Math.max(rem, bottom0 - top0);
-    const tile = Math.max(24, Math.floor(Math.min(availW / cols, availH / rows)));
+    const tile = Math.max(boss ? 1 : 24, Math.floor(Math.min(availW / cols, availH / rows)));
     const bw = tile * cols;
     const bh = tile * rows;
-    const left = Math.round(w * (prep ? 0.44 : 0.5) - bw / 2);
+    const left = Math.round(w * (boss ? 0.47 : prep ? 0.44 : 0.5) - bw / 2);
     const top = Math.round(top0 + (availH - bh) / 2);
     return { tile, left, top, cols, rows: r.r1 - r.r0 + 1, bw, bh };
   }
 
   const tilePos = (L, row, col) => ({ x: (col - st.rect.c0) * L.tile, y: (st.rect.r1 - row) * L.tile });
-  const handPos = (L, idx) => ({ x: idx * L.tile, y: (L.rows + 0.6) * L.tile });
-  const tempPos = (L, idx) => ({ x: (GEO.TEMP_C0 + idx) * L.tile, y: (L.rows + 1.72) * L.tile });
+  function boardPos(L, row, col) {
+    const p = st.prepXf.toDisp(row, col);
+    return tilePos(L, p.row, p.col);
+  }
+  const handPos = (L, idx) => bossBoard() ? boardPos(L, GEO.HAND_ROW, idx) : { x: idx * L.tile, y: (L.rows + 0.6) * L.tile };
+  const tempPos = (L, idx) => bossBoard() ? boardPos(L, GEO.TEMP_ROW, GEO.TEMP_C0 + idx) : { x: (GEO.TEMP_C0 + idx) * L.tile, y: (L.rows + 1.72) * L.tile };
 
   // ---- pieces (prep) ---------------------------------------------------------------------------------------
   function pieceArt(p) {
@@ -204,7 +216,8 @@ export function createFallbackView(host, opts = {}) {
     const dragging = st.drag?.uid === p.uid && st.drag.moved;
     const golden = !!(p.golden || lookup('chess', p.id)?.isGolden);
     const tier = p.tier || lookup('chess', p.id)?.tier || lookup('items', p.id)?.tier;
-    const dir = st.dirs.get(p.uid) || (typeof p.dir === 'string' ? p.dir.toUpperCase() : 'RIGHT');
+    const boardDir = st.dirs.get(p.uid) || (typeof p.dir === 'string' ? p.dir.toUpperCase() : 'RIGHT');
+    const dir = st.prepXf.dirToDisp(boardDir);
     const wedge = (area === 'board' || st.held.has(p.uid)) && p.kind !== 'item';
     return html`<div class=${cx('ff-piece', `ff-piece--${p.kind}`, golden && 'is-golden', dragging && 'is-lifted', st.editable && 'is-draggable', area === 'temp' && 'is-temp', wedge && `ff-dir--${dir.toLowerCase()}`)}
         data-uid=${p.uid} data-piece=${p.id} data-char=${p.diy?.charId} data-area=${area} data-row=${p.row} data-col=${p.col} style=${`transform:translate(${x}px,${y}px);width:${L.tile}px;height:${L.tile}px`}
@@ -291,10 +304,8 @@ export function createFallbackView(host, opts = {}) {
   }
 
   // ---- tiles ----------------------------------------------------------------------------------------------
-  // the stage tile a board tile shows: in a boss round's prep the player's half of the boss field (fieldTile)
-  function tileClass(row, col) {
-    const [r, c] = st.mode === 'prep' ? fieldTile(st.deployField, row, col) : [row, col];
-    return fallbackTileClass(st.stage, r, c);
+  function previewLeader() {
+    return leaderStand(st.pen, (key) => lookup('enemies', key)?.hitArea, hitTiles);
   }
 
   function dropState(target) {
@@ -303,9 +314,9 @@ export function createFallbackView(host, opts = {}) {
   }
 
   // ---- battle ---------------------------------------------------------------------------------------------------
-  function BattleUnit({ id, L }) {
-    const info = st.units.get(id);
-    const s = st.snapUnits.get(id);
+  function BattleUnit({ id, L, preview }) {
+    const info = preview || st.units.get(id);
+    const s = preview ? [id, info.x, info.y, info.maxHp, info.maxHp, 0, 0, 0, 0] : st.snapUnits.get(id);
     if (!info || !s) return null;
     const [, x, y, hp, maxHp, sp, spMax, flags, anim] = s;
     const px = (x - st.rect.c0 + 0.5) * L.tile;
@@ -316,13 +327,21 @@ export function createFallbackView(host, opts = {}) {
     const dead = anim === 4;
     const hpPct = maxHp > 0 ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 0;
     const spPct = spMax > 0 ? Math.max(0, Math.min(100, (sp / spMax) * 100)) : 0;
+    const press = (e, button) => {
+      if (button === 2) e.preventDefault();
+      const at = { button, clientX: e.clientX, clientY: e.clientY };
+      if (preview) emit('pieceClick', { ...at, enemyKey: info.defId, preview: true, unit: info });
+      else emit('pieceClick', { ...at, unitId: id, uid: info.uid ?? null, unit: info });
+    };
     return html`<div class=${cx('ff-unit', enemy ? 'is-enemy' : 'is-ally', info.golden && 'is-golden', info.boss && 'is-boss', dead && 'is-dead',
+        preview && (enemy ? 'ff-unit--leader' : 'ff-unit--mate'),
         hasFlag(flags, UF.SKILL) && 'is-skill', hasFlag(flags, UF.STUNNED | UF.FROZEN | UF.SLEEP) && 'is-stunned', hasFlag(flags, UF.FLYING) && 'is-fly')}
+        data-enemy=${preview && enemy ? info.defId : undefined}
         style=${`transform:translate(${px - size / 2}px,${py - size / 2}px);width:${size}px;height:${size}px`}
-        onPointerDown=${(e) => { if (e.button === 0) emit('pieceClick', { unitId: id, uid: info.uid ?? null, unit: info, button: 0, clientX: e.clientX, clientY: e.clientY }); }}
-        onContextMenu=${(e) => { e.preventDefault(); emit('pieceClick', { unitId: id, uid: info.uid ?? null, unit: info, button: 2, clientX: e.clientX, clientY: e.clientY }); }}>
+        onPointerDown=${!preview || enemy ? (e) => { if (e.button === 0) press(e, 0); } : undefined}
+        onContextMenu=${!preview || enemy ? (e) => press(e, 2) : undefined}>
       <div class="ff-unit__art">${src ? html`<img src=${src} alt="" draggable=${false} />` : html`<span>${[...(info.name || '?')][0]}</span>`}</div>
-      <div class="ff-unit__bars"><i class="hp" style=${`width:${hpPct}%`}></i>${!enemy && spMax > 0 ? html`<i class="sp" style=${`width:${spPct}%`}></i>` : null}</div>
+      ${!preview || enemy ? html`<div class="ff-unit__bars"><i class="hp" style=${`width:${hpPct}%`}></i>${!enemy && spMax > 0 ? html`<i class="sp" style=${`width:${spPct}%`}></i>` : null}</div>` : null}
       ${!dead ? html`<${EquipmentProgress} rows=${info.itemProgress} />` : null}
     </div>`;
   }
@@ -339,7 +358,8 @@ export function createFallbackView(host, opts = {}) {
     const bw = tile * cols;
     const left = Math.round(w / 2 - bw / 2);
     const top = Math.round(top0 + (h - top0 - rem * 0.5 - tile * rows) / 2);
-    const models = penPlacement(st.pen, { stage: st.stage });
+    const stand = previewLeader();
+    const models = penPlacement(stand ? st.pen.filter((e) => e !== stand.entry) : st.pen, { stage: st.stage });
     const cells = [];
     for (let r = PEN.r1; r >= PEN.r0; r--) {
       for (let c = PEN.c0; c <= PEN.c1; c++) {
@@ -374,12 +394,30 @@ export function createFallbackView(host, opts = {}) {
   // ---- paint -----------------------------------------------------------------------------------------------------
   function paint() {
     if (st.destroyed) return;
+    if (st.camera === 'pen') { render(html`${penView()}<div class="ff-badge">SIMPLIFIED VIEW</div>`, root); return; }
     const L = layout();
     const r = st.rect;
+    const boss = bossBoard() && (st.mode === 'prep' || bossScout());
+    const ownBoss = boss && st.mode === 'prep';
+    const stand = boss ? previewLeader() : null;
+    const leaderHits = ownBoss && stand && [...st.hlGroups.keys()].some((g) => RANGE_GROUPS.has(g))
+      ? new Set(stand.tiles.map(([row, col]) => tileKey(row, col))) : null;
+    const terrain = [];
     const tiles = [];
-    for (let row = r.r1; row >= r.r0; row--) {
-      for (let col = r.c0; col <= r.c1; col++) {
-        const p = tilePos(L, row, col);
+    for (let dr = r.r1; dr >= r.r0; dr--) {
+      for (let dc = r.c0; dc <= r.c1; dc++) {
+        const p = tilePos(L, dr, dc);
+        const place = `transform:translate(${p.x}px,${p.y}px);width:${L.tile}px;height:${L.tile}px`;
+        const d = tileKey(dr, dc);
+        const ground = `ff-tile--${fallbackTileClass(st.stage, dr, dc)}`;
+        if (boss) terrain.push(html`<div key=${d} class=${`ff-terrain ${ground}`} style=${place}></div>`);
+        const hit = leaderHits?.has(d);
+        const tile = ownBoss ? st.prepXf.toBoard(dr, dc) : { row: dr, col: dc };
+        if (!tile || ownBoss && tile.row < GEO.NORMAL_RECT.r0) {
+          if (hit) tiles.push(html`<div key=${d} class="ff-tile ff-tile--input is-leader-hit" style=${place}></div>`);
+          continue;
+        }
+        const { row, col } = tile;
         const k = tileKey(row, col);
         let hl = st.highlight.get(k);
         let rangeColor = '';
@@ -388,20 +426,20 @@ export function createFallbackView(host, opts = {}) {
           rangeColor = Number.isInteger(g.color) ? `--ff-range-color:rgba(${(g.color >> 16) & 255},${(g.color >> 8) & 255},${g.color & 255},.7);` : '';
         }
         const hov = st.hoverTarget?.area === 'board' && st.hoverTarget.row === row && st.hoverTarget.col === col ? dropState(st.hoverTarget) : null;
-        tiles.push(html`<div key=${k} class=${cx('ff-tile', `ff-tile--${tileClass(row, col)}`, hl && `is-${hl}`, hov && `is-hover-${hov}`)}
+        tiles.push(html`<div key=${d} class=${cx('ff-tile', boss ? 'ff-tile--input' : ground, hl && `is-${hl}`, hov && `is-hover-${hov}`, hit && 'is-leader-hit')}
           data-drop="board" data-row=${row} data-col=${col}
           onPointerDown=${(e) => { if (e.button === 0) emit('tileClick', { row, col, button: 0, clientX: e.clientX, clientY: e.clientY }); }}
-          style=${`${rangeColor}transform:translate(${p.x}px,${p.y}px);width:${L.tile}px;height:${L.tile}px`}></div>`);
+          style=${`${rangeColor}${place}`}></div>`);
       }
     }
     const pieces = [];
     const hand = [];
     const now = performance.now();
     if (st.mode === 'prep' && st.priv) {
-      const heldPos = (p) => { const t = st.held.get(p.uid); return t ? tilePos(L, t.row, t.col) : null; };
+      const heldPos = (p) => { const t = st.held.get(p.uid); return t ? boardPos(L, t.row, t.col) : null; };
       for (const u of Array.isArray(st.priv.prepMapChars) ? st.priv.prepMapChars : []) {
         if (!u || !Number.isInteger(u.x) || !Number.isInteger(u.y) || typeof u.defId !== 'string') continue;
-        const pos = tilePos(L, u.y, u.x);
+        const pos = boardPos(L, u.y, u.x);
         const src = (u.kind === 'enemy' || String(u.defId).startsWith('enemy_')) ? enemyIconUrl(m(), u.defId) : tokenAvatarUrl(m(), u.defId);
         pieces.push(html`<div key=${`map:${u.uid}`} class="ff-piece ff-piece--token ff-piece--map-char"
             data-uid=${u.uid} data-piece=${u.defId} data-side=${u.side || u.kind || 'enemy'} data-row=${u.y} data-col=${u.x}
@@ -414,7 +452,7 @@ export function createFallbackView(host, opts = {}) {
       }
       for (const p of Array.isArray(st.priv.board) ? st.priv.board : []) {
         if (!p || !Number.isInteger(p.row)) continue;
-        const pos = heldPos(p) || tilePos(L, p.row, p.col);
+        const pos = heldPos(p) || boardPos(L, p.row, p.col);
         pieces.push(html`<${Piece} key=${p.uid} p=${p} x=${pos.x} y=${pos.y} L=${L} area="board" />`);
       }
       for (let i = 0; i < GEO.HAND_SIZE; i++) {
@@ -436,6 +474,13 @@ export function createFallbackView(host, opts = {}) {
       }
     }
     const units = st.mode === 'battle' ? [...st.snapUnits.keys()].map((id) => html`<${BattleUnit} key=${id} id=${id} L=${L} />`) : null;
+    const mate = ownBoss && Array.isArray(st.priv?.bossMate?.units) ? st.priv.bossMate.units : [];
+    for (const u of mate) pieces.push(html`<${BattleUnit} key=${`mate:${u.id}`} id=${u.id} L=${L} preview=${u} />`);
+    if (stand) {
+      const enemyKey = stand.entry.enemyKey;
+      const info = { side: 'enemy', defId: enemyKey, boss: true, name: lookup('enemies', enemyKey)?.name || enemyKey, x: stand.col, y: stand.row, maxHp: 1 };
+      pieces.push(html`<${BattleUnit} key=${`leader:${enemyKey}`} L=${L} preview=${info} />`);
+    }
     st.floats = st.floats.filter((f) => now - f.at < DMG_TTL);
     const floats = st.mode === 'battle' && st.settings.damageNumbers ? st.floats.map((f) => {
       const s = st.snapUnits.get(f.id);
@@ -451,9 +496,13 @@ export function createFallbackView(host, opts = {}) {
       return html`<div class=${cx('ff-ghost', d.piece.golden && 'is-golden')} style=${`left:${d.x - hr.left - L.tile / 2}px;top:${d.y - hr.top - L.tile / 2}px;width:${L.tile}px;height:${L.tile}px`}>
         ${src ? html`<img src=${src} alt="" />` : null}</div>`;
     })() : null;
-    if (st.camera === 'pen') { render(html`${penView()}<div class="ff-badge">SIMPLIFIED VIEW</div>`, root); return; }
+    const project = ([row, col]) => {
+      const p = tilePos(L, row, col);
+      return { x: p.x + L.tile / 2, y: p.y + L.tile / 2, s: L.tile };
+    };
     render(html`<div class=${cx('ff-board', `ff-board--${st.mode}`, `ff-cam--${st.camera}`)} style=${`left:${L.left}px;top:${L.top}px;width:${L.bw}px;height:${L.bh}px;--tile:${L.tile}px`}>
-      ${st.mode === 'prep' ? html`<div class="ff-hand-label" style=${`top:${(L.rows + 0.18) * L.tile}px`}><span>${t('整备区')}</span><i></i></div>` : null}
+      ${st.mode === 'prep' && !boss ? html`<div class="ff-hand-label" style=${`top:${(L.rows + 0.18) * L.tile}px`}><span>${t('整备区')}</span><i></i></div>` : null}
+      ${terrain}${boss && st.bossRoute ? html`<${FallbackBossRoute} geometry=${st.bossRoute} project=${project} width=${L.bw} height=${L.rows * L.tile} />` : null}
       ${tiles}${hand}${units}${pieces}${floats}
     </div>${ghost}
     <div class="ff-badge">SIMPLIFIED VIEW</div>`, root);
@@ -466,30 +515,53 @@ export function createFallbackView(host, opts = {}) {
 
   const view = {
     kind: 'fallback',
-    setStage(stage) { st.stage = stage || null; schedule(); },
-    setCamera(kind, o = {}) {
-      st.camera = kind || 'prep';
-      if (kind === 'pen') { schedule(); return; } // the board keeps its rect for the way back
-      if (o && o.rect && Number.isFinite(o.rect.r0)) st.rect = { ...o.rect };
-      else if (kind === 'prep' || kind === 'bossPrep' || kind === 'normal') st.rect = { ...GEO.NORMAL_RECT };
-      st.deployField = kind === 'bossPrep' ? (o?.side === 'R' ? 'bossR' : 'bossL') : 'normal';
-      if (kind === 'bossPrep') st.camera = 'prep';
-      else if (kind === 'unite') st.rect = { ...GEO.UNITE_RECT };
-      else if (kind === 'boss') st.rect = { ...GEO.BOSS_RECT };
-      st.side = o?.side || 'L';
+    setStage(stage) {
+      if (st.stage && stage?.id !== st.stage.id) view.setBossRoute(null);
+      st.stage = stage || null;
       schedule();
     },
+    setCamera(kind = 'prep', o = {}) {
+      kind = kind || 'prep';
+      o = o && typeof o === 'object' ? o : {};
+      if (kind === 'pen') { st.camera = 'pen'; schedule(); return; }
+      if (st.camera === 'pen' && st.cameraBeforePen?.kind === kind && !Object.keys(o).some((k) => k !== 'instant' && k !== 'ms')) {
+        o = st.cameraBeforePen.options;
+      }
+      st.cameraBeforePen = { kind, options: o };
+      const rect = o.rect && Number.isFinite(o.rect.r0) ? o.rect : null;
+      const bossPrep = kind === 'bossPrep' || kind === 'prep' && rect?.r1 <= BOSS_DISP_MAX_ROW;
+      st.camera = bossPrep ? 'bossPrep' : kind === 'hidden' ? 'boss' : kind;
+      st.prepXf = bossPrep ? bossPrepField(o.side) : IDENTITY;
+      st.shop = o.shop;
+      if (bossPrep || st.camera === 'boss' && bossScout()) st.rect = { ...GEO.BOSS_RECT, r1: BOSS_DISP_MAX_ROW };
+      else if (kind === 'unite') st.rect = { ...GEO.UNITE_RECT };
+      else if (st.camera === 'boss') st.rect = { ...GEO.BOSS_RECT };
+      else st.rect = { ...(rect || GEO.NORMAL_RECT) };
+      if (!bossPrep && st.camera !== 'boss') view.setBossRoute(null);
+      schedule();
+    },
+    setBossRoute(route = null) {
+      if (st.destroyed) return false;
+      if (st.bossRouteSource !== route) {
+        st.bossRouteSource = route;
+        st.bossRoute = buildBossRoute(route);
+        schedule();
+      }
+      return true;
+    },
     setPrep(priv, o = {}) {
+      if (st.mode !== 'prep') view.setBossRoute(null);
       st.mode = 'prep';
       st.priv = priv || null;
       st.pen = Array.isArray(priv?.nextEnemies) ? priv.nextEnemies : [];
       st.editable = !!o.editable;
       st.canPlace = typeof o.canPlace === 'function' ? o.canPlace : null;
-      if (st.camera !== 'prep' && st.camera !== 'pen') { st.camera = 'prep'; st.rect = { ...GEO.NORMAL_RECT }; }
+      if (st.camera !== 'prep' && st.camera !== 'bossPrep' && st.camera !== 'pen') view.setCamera('prep');
       if (!st.editable && st.drag) { endDrag(); st.drag = null; st.hoverTarget = null; }
       schedule();
     },
     enterBattle(field) {
+      if (!field?.prep || !st.field?.prep || field.fieldId !== st.field.fieldId || field.kind !== st.field.kind) view.setBossRoute(null);
       st.mode = 'battle';
       st.field = field || null;
       // a scouted teammate's prep board brings their pen; a real battle empties it
@@ -578,18 +650,21 @@ export function createFallbackView(host, opts = {}) {
       const el = root.querySelector(`[data-uid="${Number(uid)}"]`);
       return el ? el.getBoundingClientRect() : null;
     },
+    prepField() { return { kind: st.prepXf.kind, side: st.prepXf.side, mirror: st.prepXf.mirror }; },
     /** Client geometry of a tile: centre, px per tile, corners (board tiles and 整备区 slots of the prep layout). */
     tileScreen(row, col) {
       const L = layout();
       const br = root.querySelector('.ff-board')?.getBoundingClientRect();
-      if (!br) return null;
+      if (!br || st.camera === 'pen') return null;
+      const prep = st.mode === 'prep';
+      const r = prep && bossBoard() ? GEO.NORMAL_RECT : st.rect;
       let p = null;
-      if (row === GEO.HAND_ROW && col >= 0 && col < GEO.HAND_SIZE && st.mode === 'prep') p = handPos(L, col);
-      else if (row === GEO.TEMP_ROW && col >= GEO.TEMP_C0 && col < GEO.TEMP_C0 + GEO.TEMP_SIZE && st.mode === 'prep') p = tempPos(L, col - GEO.TEMP_C0);
-      else if (row >= st.rect.r0 && row <= st.rect.r1 && col >= st.rect.c0 && col <= st.rect.c1) p = tilePos(L, row, col);
+      if (prep && row === GEO.HAND_ROW && col >= 0 && col < GEO.HAND_SIZE) p = handPos(L, col);
+      else if (prep && row === GEO.TEMP_ROW && col >= GEO.TEMP_C0 && col < GEO.TEMP_C0 + GEO.TEMP_SIZE) p = tempPos(L, col - GEO.TEMP_C0);
+      else if (row >= r.r0 && row <= r.r1 && col >= r.c0 && col <= r.c1) p = prep ? boardPos(L, row, col) : tilePos(L, row, col);
       if (!p) return null;
       const x0 = br.left + p.x, y0 = br.top + p.y, s = L.tile;
-      return { x: x0 + s / 2, y: y0 + s / 2, s, poly: [[x0, y0], [x0 + s, y0], [x0 + s, y0 + s], [x0, y0 + s]] };
+      return { x: x0 + s / 2, y: y0 + s / 2, s, mirror: prep && st.prepXf.mirror, poly: [[x0, y0], [x0 + s, y0], [x0 + s, y0 + s], [x0, y0 + s]] };
     },
     holdPiece(uid, tile) {
       if (tile && Number.isInteger(tile.row) && Number.isInteger(tile.col)) st.held.set(uid, { row: tile.row, col: tile.col });
@@ -608,6 +683,7 @@ export function createFallbackView(host, opts = {}) {
     destroy() {
       if (st.destroyed) return;
       st.destroyed = true;
+      st.bossRouteSource = st.bossRoute = null;
       endDrag();
       ro?.disconnect();
       if (raf) cancelAnimationFrame(raf);

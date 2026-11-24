@@ -101,6 +101,7 @@ import { DownedPlate, downedDue, preloadDownedArt, downedArtReady } from '../ui/
 import { OfferOverlay, offerBlocksPrep } from '../ui/offerOverlay.js';
 import { ChoiceOverlay, spMarks } from '../ui/choiceOverlay.js';
 import { EnemyDrawer } from '../ui/enemyDrawer.js';
+import { BossRouteToggle } from '../ui/bossRouteToggle.js';
 import { MatchBondDialog, matchInfoModel, regulationCoreAbsent } from '../ui/matchInfo.js';
 import { Ticker } from '../ui/ticker.js';
 import { EmoteWheel } from '../ui/emotes.js';
@@ -356,6 +357,7 @@ function MatchScreen({ communication = null } = {}) {
   const [personalBusy, setPersonalBusy] = useState(null); // { choiceId, idx }: an older request cannot clear a newer pick
   const [layer, setLayer] = useState('ALL');             // 联防 / 最终攻势 camera: 'L' | 'ALL' | 'R'
   const [pen, setPen] = useState(false);                 // the camera shows the enemy preview pen (research 09 §2)
+  const [bossRouteVisible, setBossRouteVisible] = useState(true);
   const [camKind, setCamKind] = useState('prep');        // kind of the last camera request (data-camera)
   const [replace, setReplace] = useState(null);          // equip-replace dialog: { request, resolve }
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -595,6 +597,9 @@ function MatchScreen({ communication = null } = {}) {
   // own board (prep, or a battle field the player fights on) → the stage with the player's overrides; a teammate's
   // board → the plain stage (their overrides are not known here)
   const shownField = showPrep ? null : field;
+  const bossRoute = phase === PHASE.PREP
+    ? (showPrep ? priv?.bossRoute : shownField?.prep ? shownField.bossRoute : null)
+    : null;
   const shownMembers = shownField ? ((Array.isArray(pub?.fields) ? pub.fields : []).find((f) => f && f.fieldId === shownField.fieldId)?.players
     || (Array.isArray(shownField.players) ? shownField.players : null)) : null;
   const ownView = showPrep || (shownField ? (shownMembers ? shownMembers.includes(myId) : shownField.fieldId === ownFieldId(myId)) : !watchingOther);
@@ -731,6 +736,10 @@ function MatchScreen({ communication = null } = {}) {
       setHud(hudRef.current);
     }
   }, [view, showPrep, priv, editable, field, combat, mode, watchingOther, watching, holdSeq]);
+
+  useEffect(() => {
+    view?.setBossRoute?.(bossRouteVisible ? bossRoute : null);
+  }, [view, field, showPrep, bossRoute, bossRouteVisible]);
 
   // A finished field has a cosmetic tail; a paused/stalled field retains its combat pose.
   useEffect(() => {
@@ -2064,6 +2073,8 @@ function MatchScreen({ communication = null } = {}) {
       <div class="ui-slot gm__ui-slot" data-ui-slot="hud.right" aria-label=${t('界面插件')} dangerouslySetInnerHTML=${{ __html: '' }}></div>
 
       <div class="gm__corner">
+        ${view && bossRoute && !pen ? html`<${BossRouteToggle} visible=${bossRouteVisible}
+          onToggle=${() => setBossRouteVisible(visible => !visible)} />` : null}
         <${AiTakeoverPanel} />
         ${showMetrics && metricsOpen ? html`<${CombatMetricsPanel} myId=${myId} onClose=${() => setMetricsOpen(false)} />` : null}
         ${spectator ? null : communication || html`<${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online'} />`}
