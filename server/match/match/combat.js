@@ -3,12 +3,12 @@
 // (server-run streaming, client-side combat), the per-field results and the sim-error log, then 联防 or SETTLE.
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
-import { PHASE, GEO } from '../../../shared/constants.js';
+import { PHASE, GEO, ERR } from '../../../shared/constants.js';
 import { deriveSeed } from '../../sim/rng.js';
 import { withBounties } from '../waves.js';
 import { planUnite } from '../unite.js';
 import { FieldRunner, DeadBattle } from '../fields.js';
-import { DELAYS } from './common.js';
+import { DELAYS, OK, fail } from './common.js';
 import { previewPlayer } from '../preview.js';
 import { morphBattleOpt } from '../../../shared/plugins/rules.js';
 import { reconcileCommandChests } from '../bandCommands.js';
@@ -139,6 +139,24 @@ export class MatchCombat {
       rec.battles++;
       rec.count++;
     }
+  }
+
+  /**
+   * `g.surrender`: give up the battle. In COMBAT it is the caller's own normal field (its remaining enemies all leak,
+   * the never-spawned ones included — Battle.forceEnd('surrender')); in 联防 it is the caller's half of the shared
+   * field (unitePhase.js _surrenderUnite: that helper's units leave for good, the teammate fights on, and the last
+   * helper standing down ends the field as its timeout, so the 联防's own survivors are billed).
+   */
+  surrenderCombat(ps, round) {
+    if (round !== this.round || !ps.alive || ps.left || ps.isBot) return fail(ERR.WRONG_PHASE);
+    if (this.phase === PHASE.UNITE) return this._surrenderUnite(ps);
+    if (this.phase !== PHASE.COMBAT) return fail(ERR.WRONG_PHASE);
+    const f = this.fields.find((field) => field.kind === 'normal' && field.players[0] === ps.playerId);
+    if (!f?.live || f.done || (!f.cc && (!this.runner || f.battle.finished))) return fail(ERR.WRONG_PHASE);
+
+    if (f.cc) this._surrenderClientField(f);
+    else this.runner.forceField(f, 'surrender');
+    return OK;
   }
 
   combatDone(runner) { this._finishCombat((f) => runner.resultOf(f)); }

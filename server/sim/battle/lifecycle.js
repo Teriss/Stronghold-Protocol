@@ -1,6 +1,6 @@
 // server/sim/battle/lifecycle.js — Battle methods: lifecycle: start (the battle-start deployment: by column, operators
 // then summons; 联防 forced exits; `battleStart`), step (the tick order of the Battle.js header), the end checks, timeout
-// / forced / cleared finishes and the BattleResult.
+// / surrender / forced / cleared finishes and the BattleResult.
 // Installed on Battle.prototype by server/sim/Battle.js (a method container: never instantiated; `this` is the battle).
 
 import { FORCED_EXIT, MAX_BATTLE_TIME } from '../constants.js';
@@ -183,7 +183,8 @@ export class BattleLifecycle {
 
   _timeout() {
     // Remaining non-boss enemies on the field count as leaked (DESIGN §5.5). Spawns that never happened before the
-    // limit are dropped: they are removed from `total` and reported in `result().unspawned` (not leaks). A content-made
+    // limit are dropped: they are removed from `total` and reported in `result().unspawned` (not leaks) — a surrender
+    // bills them instead (`_surrender`). A content-made
     // neutral (`mem.noLeak`: 隐德来希's 心烛, which follows its original) is never a leak — it is in no spawn schedule, so
     // a client result listing it would be rejected (fields.js validateClientResult 'leak key').
     for (const e of this.enemies) {
@@ -203,13 +204,46 @@ export class BattleLifecycle {
     this._finish('timeout');
   }
 
+  /**
+   * 本回合投降 (`forceEnd('surrender')`, the player's own normal field): the field is given up where it stands, so EVERY
+   * enemy still owed to the round leaks — those alive on the field (a content split / summon included: it is a real
+   * enemy of the fight) and the spawns that never happened. The second half is what a plain timeout does NOT do:
+   * `_timeout` drops the never-spawned entries from `total` into `result().unspawned`, where they cost no LP. A
+   * surrendered round is decided, so they are billed like any other leak (`counted` decides, exactly as `_recordLeak`
+   * reads a spawned enemy — a boss / part / notCountInTotal entry stays free) and 联防 re-enters them with the rest
+   * (unite.js planUnite → buildUniteWave). `total` keeps them: they were pre-counted there when the round started.
+   * The result reason stays 'timeout' — a client replay validates against it (fields.js validateClientResult) and the
+   * views read the field as one that ended on its clock.
+   */
+  _surrender() {
+    for (const e of this.enemies) {
+      if (!e.alive || e.isBoss || e.mem.noLeak) continue;
+      this._recordLeak(e, true);
+    }
+    const pending = this._pending;
+    this._pending = [];
+    this.unspawned = [];
+    for (const p of pending) {
+      if (p.tag === 'boss') continue; // never an LP charge, on a timeout either
+      const def = this.data.getEnemy(p.enemyKey);
+      this._recordLeak({
+        alive: true, side: 'enemy', defId: p.enemyKey, spawned: false, mods: p.mods ?? null,
+        lpr: def ? def.lpr : 1, sourcePlayerId: p.sourcePlayerId ?? null,
+        ownerId: p.ownerPlayerId ?? this._ownerForTile(p.pos ?? this._routeFor(p.routeIndex, p.route)?.start),
+        tag: p.tag ?? null, counted: p.counted, inTotal: p.inTotal,
+      }, true);
+    }
+    this._finish('timeout');
+  }
+
   forceEnd(reason = 'forced') {
     if (this.finished) return;
     if (this._stepping) { if (!this._endReq) this._endReq = reason; return; } // finalised when step() unwinds
     this._endReq = null;
     if (!this.started) this.start();
     if (this.finished) return;
-    if (reason === 'timeout') this._timeout();
+    if (reason === 'surrender') this._surrender();
+    else if (reason === 'timeout') this._timeout();
     else this._finish('forced');
   }
 

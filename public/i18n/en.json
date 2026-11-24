@@ -2635,5 +2635,9 @@
   "已结束 · 领袖已击破": "Finished · Boss Defeated",
   "双击已激活盟约可修改层数": "Double-click an active bond to edit stacks",
   "请在左侧「Boss」栏选择本场 Boss": "Select a Boss from the left Boss tab",
-  "时间 {time} 秒 · 领袖生命 {hp} / {maxHp} · 击杀 {kills} / {total}": "Time {time}s · Boss HP {hp} / {maxHp} · Kills {kills} / {total}"
+  "时间 {time} 秒 · 领袖生命 {hp} / {maxHp} · 击杀 {kills} / {total}": "Time {time}s · Boss HP {hp} / {maxHp} · Kills {kills} / {total}",
+  "投降": "Surrender",
+  "结束本回合作战？剩余敌人（含未出场）将全部算作漏怪。": "End this round’s battle? Every remaining enemy, including those not yet spawned, counts as leaked.",
+  "结束本次联防？你的干员将全部退场且不会复活，剩下的敌人由队友处理；联防玩家全部投降时，剩余敌人按漏怪结算扣血。": "End this joint defense? All your operators leave the field for good and will not revive; your teammate handles the rest. If every joint-defense player surrenders, the remaining enemies are charged as leaks.",
+  "已投降": "Surrendered"
 }

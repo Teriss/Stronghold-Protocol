@@ -638,6 +638,9 @@ export const C2S = {
   // spectator seat follows from then on (Match.watchPref; community report of 2026-10-06, item 56)
   'g.watch': { fieldId: (v) => isStr(v, 32), playerId: isId, $optional: ['playerId'] },
   'g.autoplay': { on: isBool },
+  // 投降 (docs/design/match.md §本回合投降 / §联防阶段投降): the caller's own normal field in COMBAT, its half of the 联防
+  // field in UNITE; `round` rejects a press that crossed the round boundary
+  'g.surrender': { round: (v) => isInt(v, 1, Number.MAX_SAFE_INTEGER) },
   // solo pause (official PauseUp / ResumeUp, DESIGN §14): freezes the running battle (field clock, deadlines, the
   // browser's local runner) — solo matches only (co-op ⇒ WRONG_PHASE), only while a battle runs; m.public.paused
   'g.pause': { on: isBool },
@@ -701,9 +704,11 @@ export const S2C = [
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
-  // speed, watch? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
-  // b.end { battleId, fieldId, reason }
-  'b.start', 'b.pool', 'b.end',
+  // speed, watch?, surrenders? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
+  // b.end { battleId, fieldId, reason } · b.surrender { battleId, fieldId, playerId, at } — a 联防 helper gave its half
+  // up (Match._surrenderUnite): the replica drops that side; `at` is the field time it happened, `b.start.surrenders`
+  // carries the ones a late replica has to apply while catching up
+  'b.start', 'b.pool', 'b.end', 'b.surrender',
   // a delegated bot layout rehearsal (DESIGN §14): b.rehearsal { taskId, playerId, cap, specs } — the host's browser
   // runs the candidate BattleSpecs off the page's main thread and answers with a C2S b.rehearsalResult ·
   // b.rehearsalCancel { taskId } — the server dropped that task (it timed out, the host changed, the prep ended):

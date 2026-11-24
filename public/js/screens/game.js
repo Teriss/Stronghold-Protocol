@@ -1860,7 +1860,32 @@ function MatchScreen({ communication = null } = {}) {
   // (client-side combat: only in 各自行动 — 联防 observers just watch the 联防 field, research 09 §3.1)
   const myDone = combat && (cc ? phase === PHASE.COMBAT && (meP?.status === 'done' || localDone) : meP?.status === 'done');
   live.current.localDone = localDone;
-  // the solo pause button: only while the own battle still runs (the server refuses it afterwards)
+  // the surrender button: the own battle in COMBAT, and in 联防 a helper's own half of the shared field (the teammate
+  // fights on; the last helper standing down ends the field and the round settles on what got through). The server
+  // refuses anyone who is not a helper of the running field, so the button is only drawn where it can work.
+  const uniteHelpers = Array.isArray(pub?.unite?.helpers) ? pub.unite.helpers : [];
+  const uniteSurrendered = Array.isArray(pub?.unite?.surrendered) ? pub.unite.surrendered : [];
+  const canSurrender = (phase === PHASE.COMBAT && !myDone)
+    || (phase === PHASE.UNITE && uniteHelpers.includes(myId) && !uniteSurrendered.includes(myId) && meP?.status !== 'surrendered');
+  const surrender = canSurrender && alive && !spectator && !watchingOther
+    ? async () => {
+      const unite = pub?.phase === PHASE.UNITE;
+      const ok = await confirmDialog({
+        title: t('投降'),
+        text: unite
+          ? t('结束本次联防？你的干员将全部退场且不会复活，剩下的敌人由队友处理；联防玩家全部投降时，剩余敌人按漏怪结算扣血。')
+          : t('结束本回合作战？剩余敌人（含未出场）将全部算作漏怪。'),
+        okText: t('投降'), danger: true,
+      });
+      const current = live.current;
+      const now = current.pub;
+      const fighting = now?.players?.some((p) => p.playerId === myId && (now.phase === PHASE.UNITE ? p.status === 'helping' : p.status === 'combat'));
+      if (ok && now && now.round === pub.round && (now.phase === PHASE.COMBAT || now.phase === PHASE.UNITE) && fighting
+          && (now.phase === PHASE.UNITE || !current.localDone)) {
+        await actions.surrender(pub.round);
+      }
+    }
+    : null;
   const canPause = pauseAvailable(pub, { solo, alive, done: meP?.status === 'done' || localDone });
   live.current.canPause = canPause;
   // client-side combat: observing a teammate's battle (research 09 §3.1) and the 联防 / 最终攻势 camera halves
@@ -1994,6 +2019,7 @@ function MatchScreen({ communication = null } = {}) {
         onExit=${() => setExitOpen(true)} onDrawer=${(t) => setDrawer((d) => (d ? null : t))} onReady=${toggleReady}
         readyBusy=${readyBusy} readyCount=${readyCount} playerCount=${solo ? 1 : aliveCount}
         pen=${pen} penAvail=${penAvail} onPen=${togglePen} config=${gd.config} frozenAt=${frozenAt}
+        surrender=${paused ? null : surrender}
         pause=${canPause || paused ? { show: canPause, paused, busy: pauseBusy, onToggle: () => togglePause(!paused) } : null}
         live=${liveLpNow} spectator=${spectator}
         spectators=${specFacts.list} myId=${myId} isHost=${specFacts.isHost} onRemoveSpectator=${removeSpectator} room=${modRoom}
@@ -2164,7 +2190,7 @@ function MatchScreen({ communication = null } = {}) {
     ${facing && view ? html`<${FacingWheel} key=${`${facing.uid}:${facing.row},${facing.col}`} view=${view} row=${facing.row} col=${facing.col}
       grid=${facing.grid} healing=${facing.healing} name=${facing.name} onPreview=${previewFacing} onCommit=${commitFacing} onCancel=${cancelFacing} />` : null}
 
-    ${paused ? html`<${PausedOverlay} canResume=${solo} busy=${pauseBusy} onResume=${() => togglePause(false)} onExit=${() => setExitOpen(true)} />` : null}
+    ${paused ? html`<${PausedOverlay} onSurrender=${surrender} canResume=${solo} busy=${pauseBusy} onResume=${() => togglePause(false)} onExit=${() => setExitOpen(true)} />` : null}
 
     ${replace ? html`<${EquipReplaceDialog} request=${replace.request} getItem=${gd.item}
       onConfirm=${(uid) => closeReplace(uid)} onCancel=${() => closeReplace(null)} />` : null}

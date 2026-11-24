@@ -502,3 +502,26 @@ and effect key; ordinary and elite copies, rebuy and later rounds share it, whil
 traits using the copied-from operator and investor repeats advancing once each. No official state-layout claim is made.
 Other garrison counters are unchanged. No persistence or replay infrastructure is introduced by this fix. Runtime text is handled separately by #926, which reads
 shared counters when present and otherwise keeps the legacy display path; this payout fix builds independently.
+
+
+### 本回合投降
+
+普通战斗中，存活玩家可投降并立即结束自己的战场。战场按当前时刻判负：本回合尚欠的敌人全部算作漏怪——
+包括场上仍存活的敌人（战斗中分裂、召唤出来的也算）和还没出场的敌人；`result().unspawned` 因此为空，
+这些漏怪仍留在顶栏胶囊的分母里（`spawned: false` 标记未出场者）。它们照常参加联防判定：进入联防时按常规
+流程重进场，结算按联防后的漏怪数与通常的扣血上限（`lpCapPerRound`）扣血；没有联防时直接按漏怪数扣血。队友的普通战场继续运行。
+
+### 联防阶段投降
+
+联防阶段，参与联防的玩家（`unite.helpers`，最多 2 名）可以各自投降，不影响另一名联防玩家：
+
+- 投降者的干员在当前位置全部阵亡并永久离场——不留下倒地干员、不再部署、也不会复活（阵亡时 hook 的复活 /
+  再部署一律被拒绝），其召唤物与随身装置一并退场。联防守住的那部分战场照常运行，敌人继续沿路线前进。
+- 单个玩家投降不结束联防；两名联防玩家都投降时，场上已无人防守，战场按当前时刻判负（等同该战的超时）：仍存活
+  和尚未出场的敌人都算突破防线，结算照常按 `uniteSurvivors` 把这些敌人记到漏出它们的玩家头上，再按每回合
+  扣血上限（`lpCapPerRound`）扣血。投降本身不直接扣参与联防者的血——他们只是放弃了这次联防。
+- 漏怪玩家不参与联防，也就没有这个按钮。首领战与最终攻势使用共享战场，不提供这个按钮。
+- 客户端战斗（DESIGN §14）下，投降以 `b.surrender { playerId, at }` 广播给该战场的所有观看者，各自的本地副本
+  在同一战场时刻移走该玩家；服务端接管 / 中途重连时按 `b.start` 携带的 `surrenders` 重放到同一时刻，结果与
+  实时运行一致。战场记录（`fields[].surrenders`）是这些时刻的唯一来源。
+

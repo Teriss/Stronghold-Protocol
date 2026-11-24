@@ -7,6 +7,7 @@
 import { requiresTraitLayerAuthority } from '../operatorTraits.js';
 import { PHASE } from '../../../shared/constants.js';
 import { DeadBattle, syntheticResult, RESULT_GRACE_MS, HARD_CAP_SECONDS, HeadlessJob } from '../fields.js';
+import { TICK } from '../../sim/constants.js';
 import { buildBattleSpec, createBattleFromSpec } from '../../sim/spec.js';
 import { testSlice } from '../testTrace.js';
 import { morphBattleOpt } from '../../../shared/plugins/rules.js';
@@ -103,6 +104,9 @@ export class MatchClientCombat {
       authoritative: !!(!f.done && !f.verifyJob && f.mode === 'client' && f.authority === pid && !watch),
       startAt: f.startAt, serverNow: this.sched.now(), elapsed: Math.round(this._fieldElapsed(f) * 1000) / 1000,
       speed: this.gameSpeed, watch: !!watch, done: !!f.done,
+      // 联防 helpers that gave their side up (unitePhase.js _surrenderUnite), with the field time it happened: a
+      // replica catching up from the spec applies them too, so a resync / a late watcher sees the same empty half
+      ...(f.surrenders && f.surrenders.length ? { surrenders: f.surrenders.map((s) => ({ playerId: s.playerId, at: s.at })) } : {}),
     };
   }
 
@@ -174,7 +178,12 @@ export class MatchClientCombat {
     // the former authority (still online after a timeout / an invalid result) stops reporting and keeps its view
     if (prev) this.sendTo(prev, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason: 'takeover' });
     if (f.kind === 'boss' || f.kind === 'hidden') { this._bossServerRun(f); return; }
-    const job = new HeadlessJob(this._specBattle(f.spec), { onError: (e) => this.reportError(`field ${f.fieldId} step`, e), players: f.players });
+    const job = new HeadlessJob(this._specBattle(f.spec), {
+      onError: (e) => this.reportError(`field ${f.fieldId} step`, e),
+      players: f.players,
+      // a 联防 helper's surrender happened at a field time the spec alone does not know: replay it there (HEADER)
+      events: this._surrenderEvents(f),
+    });
     f.job = job;
     f.battle = job.battle;
     f.timeline = job.timeline; // grows while the job runs (the teammates' progress UI reads it on the field clock)
@@ -218,6 +227,38 @@ export class MatchClientCombat {
       this._progressTimer = this.later(1000, tick);
     };
     this._progressTimer = this.later(1000, tick);
+  }
+
+  /** The field's recorded surrenders (unitePhase.js _surrenderUnite) as HeadlessJob events: the replay applies them at their own field times. */
+  _surrenderEvents(f) {
+    return (f && Array.isArray(f.surrenders) ? f.surrenders : []).map((s) => ({
+      at: Number(s.at) || 0,
+      apply: (battle) => battle.surrenderPlayer(s.playerId),
+    }));
+  }
+
+  _surrenderClientField(f, endReason = 'surrender') {
+    // Replay only up to the server's current field clock, then end it as a surrender — the same finish the server-run
+    // path gives (Battle.forceEnd('surrender'): the field's remaining enemies leak, the never-spawned ones included, so
+    // the round's LP charge and the 联防 re-entry are the ones a surrendered round owes). A 联防 field has no own player
+    // to bill: the last helper's surrender ends it as `'timeout'` (unitePhase.js _surrenderUnite), and every surrender
+    // the field already recorded is replayed at its own field time.
+    const elapsed = this._fieldElapsed(f);
+    this._clearFieldTimers(f);
+    const job = new HeadlessJob(this._specBattle(f.spec), {
+      onError: (e) => this.reportError(`field ${f.fieldId} surrender`, e),
+      players: f.players,
+      endReason,
+      events: this._surrenderEvents(f),
+    });
+    job.cap = Math.min(job.cap, Math.floor(elapsed / TICK + 1e-9));
+    job.run();
+    const { battle, result, timeline } = job.output();
+    Object.assign(f, { battle, result, timeline, endGt: result.time, resultSource: 'server' });
+    for (const pid of this.watchersOf(f.fieldId)) {
+      this.sendTo(pid, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason: 'timeout' });
+    }
+    this._fieldDone(f);
   }
 
   /** A field has its final result. */

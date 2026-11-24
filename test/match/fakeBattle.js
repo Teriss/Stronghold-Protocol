@@ -92,8 +92,19 @@ export class FakeBattle {
 
   forceEnd(reason = 'forced') {
     if (this.finished) return;
-    this._finish(reason === 'timeout' ? 'timeout' : 'forced');
+    // 'surrender' ends like a timeout for the result's shape (Battle.forceEnd keeps the same reason); what it bills
+    // differently is the sim's own business — the scripted plan decides the leaks here.
+    this._finish(reason === 'timeout' || reason === 'surrender' ? 'timeout' : 'forced');
   }
+
+  /** 联防 helper surrender (Battle.surrenderPlayer): recorded only — the scripted plan owns the outcome. */
+  surrenderPlayer(pid) {
+    if (!pid || (this.surrendered && this.surrendered.has(pid))) return 0;
+    (this.surrendered ||= new Set()).add(pid);
+    return 1;
+  }
+
+  isSurrendered(pid) { return !!(pid && this.surrendered && this.surrendered.has(pid)); }
 
   _finish(reason) {
     this.finished = true;

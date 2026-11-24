@@ -190,6 +190,63 @@ test('time limit: battle ends at timeLimit, remaining enemies count as leaked, u
   assert.equal(r.perPlayer.p1.perfect, false);
 });
 
+test('surrender: every remaining enemy leaks — the ones on the field and the spawns that never happened', () => {
+  const h = makeBattle({
+    defs: { enemies: { enemy_walker: walker({ speed: 0.01 }) } },
+    enemies: [{ key: 'enemy_walker', count: 2 }, { key: 'enemy_walker', time: 100 }], timeLimit: 100, content: 'none',
+  });
+  h.run(1);
+  const alive = h.b.enemies.filter((e) => e.alive).length;
+  assert.equal(alive, 2);
+  assert.equal(h.b._pending.length, 1, 'one enemy is still waiting for its spawn time');
+  h.b.forceEnd('surrender');
+  const r = h.result();
+  // a surrendered battle reads as one that ended on its clock: the reason and the views stay a timeout's
+  assert.equal(r.reason, 'timeout');
+  assert.equal(r.perPlayer.p1.leaked.length, 3, 'both on-field enemies and the unspawned one are leaked');
+  assert.ok(r.perPlayer.p1.leaked.every((l) => l.counted !== false));
+  assert.equal(r.perPlayer.p1.leaked.filter((l) => l.spawned === false).length, 1, 'the never-spawned one is marked');
+  assert.equal(r.unspawned, undefined, 'nothing is dropped as unspawned — a surrender bills it');
+  // it stays in the capsule's denominator: 3 must be resolved out of 3
+  assert.equal(r.total, 3);
+  assert.equal(r.perPlayer.p1.total, 3);
+  assert.equal(r.resolved, 3);
+  assert.equal(r.perPlayer.p1.perfect, false);
+});
+
+test('surrenderPlayer: a 联防 helper\'s side dies where it stands — no body, no redeploy, no revive; the teammate fights on', () => {
+  const h = makeBattle({
+    kind: 'unite',
+    defs: { chess: { t_guard: guard({ stats: { respawnTime: 0, cost: 0 } }) } },
+    players: [
+      { playerId: 'p1', side: 'L', units: [{ uid: 1, chessId: 't_guard', row: 10, col: 3 }] },
+      { playerId: 'p2', side: 'L', colOffset: 8, units: [{ uid: 2, chessId: 't_guard', row: 10, col: 12 }] },
+    ],
+    content: 'none', enemies: [{ key: 'enemy_walker', time: 100 }], timeLimit: 100, autoFinish: false,
+  });
+  h.step();
+  const mine = h.b.allyUnits.find((u) => u.ownerId === 'p1');
+  const theirs = h.b.allyUnits.find((u) => u.ownerId === 'p2');
+  assert.ok(mine && mine.alive && theirs && theirs.alive, 'both halves are on the field');
+  assert.equal(h.b.surrenderPlayer('p1'), 1);
+  assert.equal(mine.alive, false, 'the operator dies on its tile');
+  assert.equal(mine.removed, true, 'no knocked-out body is left behind');
+  assert.equal(h.b.isDown(mine), false);
+  assert.equal(h.b.isSurrendered('p1'), true);
+  assert.equal(h.b.isSurrendered('p2'), false);
+  assert.equal(theirs.alive, true, 'the teammate keeps fighting');
+  assert.equal(h.result().perPlayer.p1.surrendered, true);
+  assert.equal(h.result().perPlayer.p2.surrendered, undefined);
+  // nothing brings it back: the automatic redeploy never sees a body, a manual redeploy and a death hook's deploy are refused
+  assert.equal(h.b.redeploy(mine), false);
+  assert.equal(h.b._deploy(mine, { initial: false }), false);
+  h.run(3);
+  assert.equal(mine.alive, false, 'it never comes back');
+  assert.equal(theirs.alive, true);
+  assert.equal(h.b.surrenderPlayer('p1'), 0, 'idempotent');
+  assert.equal(h.b.surrenderPlayer('nobody'), 0);
+});
+
 test('forceEnd: forced ends immediately, timeout counts leaks; step after finish is a no-op', () => {
   const h = makeBattle({ defs: { enemies: { enemy_walker: walker() } }, enemies: [{ key: 'enemy_walker' }], content: 'none' });
   h.run(1);

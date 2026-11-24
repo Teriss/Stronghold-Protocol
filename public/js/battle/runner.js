@@ -809,6 +809,10 @@ export function createBattleRunner(deps) {
       leaks: 0, leakMark: '', left: null,
       // live bond layers grown in this battle { [playerId]: { [bondId]: n } } and their total gain (noteLayers)
       live: null, layerSum: 0,
+      // 联防 helpers that gave their side up (server `b.surrender`): recorded with the field time, applied to the replica
+      // once its battle reaches it — a b.start carries the ones that happened before it was built, a live frame is due now
+      surrenders: Array.isArray(msg.surrenders) ? msg.surrenders.filter((s) => s && typeof s === 'object' && s.playerId) : [],
+      surrendered: new Set(),
       // state-bearing events of the steps run while the tab was hidden (hold(); delivered by the next rendered frame;
       // heldAt = the game time each was drained at), and whether that backlog overflowed (the next frame re-enters the
       // view from the field meta); the event batches of the current sliced step (stepEntry)
@@ -877,6 +881,7 @@ export function createBattleRunner(deps) {
       // silent catch-up to the field's clock before it is shown (a reconnect / observing a running field) — for the view
       // asked for; a superseded authority catches up in the background (advance)
       while (!battle.finished && e.seq === startSeq && targetTick(e, clock()) - battle.tickCount > ticksPerFrameCap(e.speed)) {
+        applySurrenders(e);
         const n = Math.min(PREPARE_SLICE, targetTick(e, clock()) - battle.tickCount);
         await stepEntry(e, n);
         try { battle.drainEvents(); } catch { /* ignore */ }
@@ -885,6 +890,7 @@ export function createBattleRunner(deps) {
         await yieldFrame();
         if (!wanted() || e.failed) return;
       }
+      applySurrenders(e, true);
       pending.delete(e.battleId);
       entries.set(e.battleId, e);
       evict();
@@ -912,6 +918,40 @@ export function createBattleRunner(deps) {
       if (e.battle && !e.failed) e.host.syncPool(msg.hp, msg.acked ? msg.acked[e.fieldId] : undefined);
     }
     emit('pool', msg);
+  }
+
+  /**
+   * Drop one 联防 helper's side from a replica (server `b.surrender`; unitePhase.js _surrenderUnite). The server's
+   * record of the field keeps the moment it happened (`at`), so a replica catching up from its b.start applies the ones
+   * it has passed; a live frame is due at once. A no-op on a battle already finished or a player already dropped.
+   */
+  function applySurrender(e, pid) {
+    if (!e || e.failed || !pid || !e.battle || e.battle.finished) return;
+    if (!e.surrendered) e.surrendered = new Set();
+    if (e.surrendered.has(pid)) return;
+    e.surrendered.add(pid);
+    try {
+      const p = e.host?.surrenderPlayer?.(pid);
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch { /* a replica that cannot do it keeps its display */ }
+  }
+
+  /** Apply the b.start surrenders the battle has reached (all of them once the catch-up is done). */
+  function applySurrenders(e, all = false) {
+    if (!e || !Array.isArray(e.surrenders) || !e.surrenders.length) return;
+    const gt = Number(e.battle && e.battle.time) || 0;
+    for (const s of e.surrenders) {
+      if (s.done) continue;
+      if (!all && (Number(s.at) || 0) > gt + 1e-9) continue;
+      s.done = true;
+      applySurrender(e, s.playerId);
+    }
+  }
+
+  function onSurrender(msg) {
+    const e = msg && (entries.get(msg.battleId) || pending.get(msg.battleId));
+    if (!e || e.failed) return;
+    applySurrender(e, msg.playerId);
   }
 
   function onEnd(msg) {
@@ -995,6 +1035,7 @@ export function createBattleRunner(deps) {
     offs.push(net.on('b.start', (m) => { onStart(m).catch((err) => console.warn('[runner] b.start failed', err)); }));
     offs.push(net.on('b.pool', onPool));
     offs.push(net.on('b.end', onEnd));
+    offs.push(net.on('b.surrender', onSurrender));
     // the session is back (reconnect / resume): results lost with the old socket go out again
     offs.push(net.on('status', (st) => { if (st && st.status === 'online') redeliver(); }));
   }

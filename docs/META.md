@@ -1433,3 +1433,31 @@ it returns false for another location or a failed stow (reattaching on failure),
 The Stainless `SERVER_UPGRADE_SELF_EQUIP` handler walks a snapshot of carried items, upgrades valid normal items,
 returns each one and restores its old id if the return fails. UID, metadata and stock provenance remain attached to
 the original item. See [the match rule and footage](design/match.md#stainless-upgraded-equipment-return).
+
+
+### Personal surrender during normal combat
+
+`g.surrender { round }` ends the sender's live normal field for that round. The server ends the battle at the current
+field time as a surrender (`Battle.forceEnd('surrender')`, SIM.md §1.3): every enemy the round still owes leaks — those
+alive on the field, content-spawned splits and summons included, and those whose spawn never happened (leak entries with
+`spawned: false`; `unspawned` stays empty and `total` keeps them). For client-side combat the server replays the
+BattleSpec to that point and releases that result (`HeadlessJob` `endReason`). The result goes through the usual 联防
+planning, so a perfect teammate re-fights those leaks and round settlement charges `min(lpCapPerRound, …)` — without
+联防, `min(lpCapPerRound, counted leaks)`. The `reason` stays `'timeout'` (clients validate and display it as one).
+([match rules](design/match.md#本回合投降)).
+
+### Surrender during 联防
+
+The same `g.surrender { round }` is also accepted from a **helper** of the running 联防 (`m.public.unite.helpers`) and
+stands that player's half down: `Battle.surrenderPlayer(playerId)` kills every operator of the side where it stands (no
+knocked-out body, no redeploy, no revive — `_deploy` / `redeploy` / `spawnToken` refuse that player afterwards) and
+removes its summons; the teammate's half and the enemies are untouched, so the field keeps running. No LP is charged by
+the surrender itself; the field's own billing does it (`uniteSurvivors`: an enemy still standing at the end costs the
+player that leaked it). When the last helper stands down the field ends as its timeout (every enemy still owed leaks),
+so the round settles through the ordinary 联防 settlement. `m.public.unite.surrendered` lists the helpers that stood
+down (their status is `surrendered`); a non-helper is refused (`WRONG_PHASE`).
+
+Client-side combat: the surrender is broadcast to every viewer of the field as `b.surrender { battleId, fieldId,
+playerId, at }` (`at` = the field time it happened) and each replica drops that side; the field record keeps the list
+(`fields[].surrenders`), so a `b.start` carries `surrenders` for a replica that joins later and a server takeover replays
+them at the same game time (`HeadlessJob` events). ([match rules](design/match.md#联防阶段投降)).

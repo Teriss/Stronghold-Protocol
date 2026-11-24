@@ -706,3 +706,35 @@ test('settings expose 作战统计 off by default and the match hides the button
   assert.equal(line({ quality: 'high', damageNumbers: true, combatMetrics: true }), 'settings: quality high | damage numbers | combat metrics');
   assert.equal(line({ quality: 'high', damageNumbers: true, combatMetrics: false }), 'settings: quality high | damage numbers');
 });
+
+test('b.surrender drops a 联防 helper\'s side on the replica; a late b.start replays the surrenders it missed', async () => {
+  const base = realStart(7411);
+  const me = base.spec.players[0];
+  // a two-helper 联防 field: the same board on the right-hand half (the server's own players[] shape, unite.js)
+  const spec = { ...base.spec, battleId: 'u-r1', fieldId: 'u', kind: 'unite', rect: { r0: 9, r1: 12, c0: 0, c1: 20 },
+    players: [me, { ...me, playerId: 'p_1', colOffset: 8 }], timeLimit: 60 };
+  const startMsg = (elapsed, extra = {}) => ({ battleId: 'u-r1', fieldId: 'u', kind: 'unite', spec, authoritative: false,
+    startAt: 1000, serverNow: 1000, elapsed, speed: 2, watch: true, ...extra });
+  const r = rig();
+  r.net.emit('b.start', startMsg(0));
+  await r.settle();
+  const e = r.runner._entries.get('u-r1');
+  assert.ok(e && !e.failed, 'the field is built');
+  const aliveOf = (battle, pid) => battle.allyUnits.filter((u) => u.ownerId === pid && u.alive).length;
+  r.advance(500);
+  assert.ok(aliveOf(e.battle, 'p_0') > 0 && aliveOf(e.battle, 'p_1') > 0, 'both helpers hold their half');
+  r.net.emit('b.surrender', { battleId: 'u-r1', fieldId: 'u', playerId: 'p_1', at: e.battle.time });
+  assert.equal(aliveOf(e.battle, 'p_1'), 0, 'the surrendered half is empty at once');
+  assert.ok(aliveOf(e.battle, 'p_0') > 0, 'the teammate keeps its units');
+  assert.equal(e.battle.isSurrendered('p_1'), true);
+  // a replica that starts after the surrender (reconnect / a late watcher) applies it while catching up
+  const r2 = rig();
+  r2.net.emit('b.start', startMsg(2, { surrenders: [{ playerId: 'p_1', at: 0.5 }] }));
+  await r2.settle();
+  const e2 = r2.runner._entries.get('u-r1');
+  assert.equal(e2.battle.isSurrendered('p_1'), true);
+  assert.equal(aliveOf(e2.battle, 'p_1'), 0);
+  assert.ok(aliveOf(e2.battle, 'p_0') > 0);
+  r.runner.dispose();
+  r2.runner.dispose();
+});

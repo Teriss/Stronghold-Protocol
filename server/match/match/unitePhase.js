@@ -3,12 +3,12 @@
 // counts (_uniteLeft, user playtest #6 item 7; _uniteTick in the server-run mode).
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
-import { PHASE, GEO } from '../../../shared/constants.js';
+import { PHASE, GEO, ERR } from '../../../shared/constants.js';
 import { deriveSeed } from '../../sim/rng.js';
 import { uniteBattleOpts, uniteSurvivors } from '../unite.js';
 import { FieldRunner, timelineAt, uniteBillBounds } from '../fields.js';
 import { uniteLeft } from '../../sim/spec.js';
-import { FLOW_TICKER_PRIORITY, DELAYS } from './common.js';
+import { FLOW_TICKER_PRIORITY, DELAYS, OK, fail } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 import { onStartUnite } from '../botEmotes.js';
 
@@ -97,6 +97,53 @@ export class MatchUnite {
     this.markPublic();
     const plan = this.unitePlan;
     this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, res));
+  }
+
+  /**
+   * 联防阶段个人投降 (`g.surrender` from a helper; rules: docs/design/match.md §联防阶段投降). The helper's side leaves
+   * the shared field for good (Battle.surrenderPlayer: every operator dies, nothing revives or redeploys, its summons go
+   * with it) while the teammate keeps fighting — no LP is charged here, the field's own billing does it (unite.js
+   * uniteSurvivors: an enemy still standing at the end costs the player that leaked it). When the LAST helper stands
+   * down the field has nobody left to defend it: it ends as its timeout, so every enemy still owed (on the field or
+   * never spawned) is charged to its source and the round settles through the ordinary 联防 settlement.
+   *
+   * Client-side combat: the surrender travels to every viewer as `b.surrender` (at the field clock it happened) so their
+   * replica drops that side too; the field record keeps it (`f.surrenders`) for a resync b.start and for a server
+   * takeover, which replays it at the same game time (fields.js HeadlessJob events).
+   */
+  _surrenderUnite(ps) {
+    const plan = this.unitePlan;
+    if (!plan || !plan.helpers.includes(ps)) return fail(ERR.WRONG_PHASE, 'not a unite helper');
+    const f = this.fields.find((x) => x && x.kind === 'unite') || null;
+    if (!f || f.done || f.verifyJob || !f.live) return fail(ERR.WRONG_PHASE);
+    if (!f.surrendered) f.surrendered = new Set();
+    const pid = ps.playerId;
+    if (f.surrendered.has(pid)) return OK;
+    f.surrendered.add(pid);
+    if (!f.surrenders) f.surrenders = [];
+    const last = plan.helpers.every((p) => f.surrendered.has(p.playerId));
+    if (f.cc) {
+      const at = f.mode === 'server' && f.battle ? Number(f.battle.time) || 0 : this._fieldElapsed(f);
+      f.surrenders.push({ playerId: pid, at });
+      if (f.mode === 'server') {
+        // the server is already simulating this field: apply it to the running battle, and end it if it was the last one
+        if (f.battle && !f.battle.finished) f.battle.surrenderPlayer(pid);
+        if (last && f.battle && !f.battle.finished) f.battle.forceEnd('timeout');
+      } else {
+        for (const viewer of this.watchersOf(f.fieldId)) {
+          this.sendTo(viewer, { t: 'b.surrender', battleId: f.battleId, fieldId: f.fieldId, playerId: pid, at });
+        }
+        // nobody is left on the field: replay to the field clock, apply the surrenders and end it as its timeout
+        if (last) this._surrenderClientField(f, 'timeout');
+      }
+    } else {
+      const at = Number(f.battle && f.battle.time) || 0;
+      f.surrenders.push({ playerId: pid, at });
+      if (f.battle && !f.battle.finished) f.battle.surrenderPlayer(pid);
+      if (last) this.runner.forceField(f, 'timeout');
+    }
+    this.markPublic();
+    return OK;
   }
 
   /**

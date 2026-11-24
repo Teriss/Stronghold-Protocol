@@ -194,6 +194,12 @@ export class FieldRunner {
     this.m.markPublic();
   }
 
+  forceField(f, reason) {
+    this._forceField(f, reason);
+    this._emit(f);
+    this._checkDone();
+  }
+
   /** Force-end every live field (team LP 0, hard cap). */
   _forceAll(reason) {
     for (const f of this.fields) if (f.live || !f.battle.finished) this._forceField(f, reason);
@@ -285,13 +291,20 @@ export function timelineSample(b) {
  * until the battle ends (→ true) or the budget is used (→ false; checked every 16 ticks). `timeline` grows while it
  * runs (timelineSample: [gt, killed, total, resolved(, left)] every TIMELINE_EVERY game seconds, then the final state);
  * `output()` once done gives `{ battle, result, timeline, crashed }`. A throwing battle is force-ended, then replaced by
- * a DeadBattle; the run is bounded by HARD_CAP_SECONDS.
+ * a DeadBattle; the run is bounded by HARD_CAP_SECONDS. `endReason` ends a battle that reaches the cap ('timeout'
+ * unless the caller cut it short — a surrender replays to the field clock and then ends as `'surrender'`, which bills
+ * the never-spawned enemies too; Battle.forceEnd). `events` = `[{ at, apply(battle) }]` applied in order once the
+ * battle's own game time reaches `at` (a 联防 helper's surrender, recorded at the field clock it happened on — a
+ * takeover / a cut-short replay reproduces it exactly where it was; Match._surrenderUnite).
  */
 export class HeadlessJob {
-  constructor(battle, { onError = null, players = [] } = {}) {
+  constructor(battle, { onError = null, players = [], endReason = 'timeout', events = [] } = {}) {
     this.battle = battle;
     this.onError = onError;
     this.players = players;
+    this.endReason = endReason;
+    this.events = Array.isArray(events) ? events.slice() : [];
+    this._next = 0;
     this.timeline = [timelineSample(battle)];
     this.every = Math.max(1, Math.round(TIMELINE_EVERY / TICK));
     this.cap = Math.ceil(HARD_CAP_SECONDS / TICK);
@@ -311,6 +324,11 @@ export class HeadlessJob {
     try {
       let k = 0;
       while (!b.finished && this.n < this.cap) { // loop-cap: step cap
+        // the field's timed events first: a surrender applies where it happened, before the next tick runs
+        while (this._next < this.events.length && b.time + 1e-9 >= (Number(this.events[this._next].at) || 0)) {
+          const ev = this.events[this._next++];
+          try { if (typeof ev.apply === 'function') ev.apply(b); } catch (e) { if (this.onError) this.onError(e); }
+        }
         b.step();
         this.n++;
         k++;
@@ -318,7 +336,7 @@ export class HeadlessJob {
         if (this.n % this.every === 0) this.timeline.push(timelineSample(b));
         if ((k & 15) === 0 && !b.finished && (replaying ? control.stop() : timed && now() - t0 >= budgetMs)) return false;
       }
-      if (!b.finished) b.forceEnd('timeout');
+      if (!b.finished) b.forceEnd(this.endReason);
     } catch (e) {
       this.crashed = true;
       if (this.onError) this.onError(e);

@@ -54,6 +54,8 @@ export class InPageSimHost {
     }));
   }
   syncPool(hp, acked) { this.battle?.sharedBoss?.sync?.(hp, acked); }
+  /** 联防: one helper gave its half up (server `b.surrender`); the local replica drops that side too. */
+  surrenderPlayer(pid) { this.battle?.surrenderPlayer?.(pid); }
   forceEnd(reason) { this.battle?.forceEnd(reason); }
   stop() { this.battle = null; }
 }
@@ -147,6 +149,7 @@ export class WorkerSimHost {
   }
   ownerOps(pid) { return this.packet?.ops?.[pid] || []; }
   syncPool(hp, acked) { return this.rpc('syncPool', [hp, acked]).catch(() => {}); }
+  async surrenderPlayer(pid) { this.accept(await this.rpc('surrender', [pid])); }
   async forceEnd(reason) { this.accept(await this.rpc('forceEnd', [reason])); }
   stop(err = failure('PLUGIN_WORKER_STOPPED', 'simulation worker stopped')) {
     if (this.stopped) return;

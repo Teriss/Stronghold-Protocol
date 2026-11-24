@@ -71,7 +71,12 @@ export class MatchViews {
         const f = this.fields.find((x) => x.players.includes(ps.playerId));
         return f && f.live ? 'combat' : 'done';
       }
-      case PHASE.UNITE: return this.unitePlan && this.unitePlan.helpers.includes(ps) ? 'helping' : 'done';
+      case PHASE.UNITE: {
+        if (!this.unitePlan || !this.unitePlan.helpers.includes(ps)) return 'done';
+        // a helper who stood down (g.surrender in the shared field): its half is empty, the round is still being fought
+        const f = this.fields.find((x) => x && x.kind === 'unite');
+        return f && f.surrendered && f.surrendered.has(ps.playerId) ? 'surrendered' : 'helping';
+      }
       case PHASE.ROUND_START: return 'acting';
       default: return 'done';
     }
@@ -221,7 +226,15 @@ export class MatchViews {
         cards, order: s.order.slice(), turn: this.spTurn(), picks: { ...s.picks }, taken, untimed: !!s.untimed,
       };
     }
-    if (this.phase === PHASE.UNITE && this.unitePlan) v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };
+    if (this.phase === PHASE.UNITE && this.unitePlan) {
+      const f = this.fields.find((x) => x && x.kind === 'unite') || null;
+      v.unite = {
+        helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId),
+        // helpers who gave their half up (unitePhase.js _surrenderUnite): every viewer sees the same empty side, the
+        // surrender button of that player is gone, and the last one ends the field
+        ...(f && f.surrendered && f.surrendered.size ? { surrendered: [...f.surrendered] } : {}),
+      };
+    }
     // SETTLE after a 联防: its outcome as data (settle.js uniteResultView; GitHub #235, PR #112) — { through, helpers,
     // leakers, losses: { playerId: the LP settlement charged this round } } — the client's result box reads the viewer's
     // own charge from it; absent when no 联防 resolved (the client then shows the round's own battle result)

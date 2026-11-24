@@ -15,6 +15,8 @@ export const STATUS_META = Object.freeze({
   combat: { glyph: 'sword', text: N_('作战中'), tone: 'orange' },
   done: { glyph: 'check', text: N_('作战结束'), tone: 'mint' },
   helping: { glyph: 'shield', text: N_('联防中'), tone: 'orange' },
+  // a 联防 helper who gave its half up (g.surrender during UNITE): the field still runs for the teammate
+  surrendered: { glyph: 'exit', text: N_('已投降'), tone: 'red' },
   left: { glyph: 'exit', text: N_('已离开'), tone: 'red' },
   dead: { glyph: 'close', text: N_('已淘汰'), tone: 'red' },
 });

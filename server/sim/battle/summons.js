@@ -48,6 +48,7 @@ export class BattleSummons {
     if (lethaniaPursuit && (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y))) return null;
     const ownerUnit = owner && typeof owner === 'object' ? owner : null;
     const pid = ownerUnit ? ownerUnit.ownerId : owner;
+    if (this.isSurrendered(pid)) return null; // the side left the field (surrenderPlayer): no new summons
     const ps = this.getPlayer(pid) ?? (ownerUnit ? ownerUnit.player : null);
     const def = opts.def ? normalizeToken(tokenId, opts.def) : this._tokenDef(tokenId, ownerUnit, null);
     if (!def) { this.log(`unknown token ${tokenId}`); return null; }

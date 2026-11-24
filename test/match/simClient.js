@@ -53,6 +53,7 @@ export class SimClient {
     if (msg.t === 'b.start') this._start(msg);
     else if (msg.t === 'b.pool') this._pool(msg);
     else if (msg.t === 'b.end') this._end(msg);
+    else if (msg.t === 'b.surrender') this._surrender(msg);
   }
 
   _start(msg) {
@@ -72,10 +73,24 @@ export class SimClient {
     entry.battle = createBattleFromSpec(msg.spec, this.o.ds, { BattleClass: this.o.BattleClass, recordEvents: false, quiet: true });
     entry.meter = attachLpMeter(entry.battle);
     this.battles.set(msg.battleId, entry);
+    // 联防: the helpers who already gave their side up (a resync / a late watcher) — applied where they happened
+    for (const s of Array.isArray(msg.surrenders) ? msg.surrenders : []) this._applySurrender(entry, s && s.playerId, Number(s && s.at) || 0);
     // catch up to the field's clock (reconnect / observing a running field)
     const target = Number(msg.elapsed) || 0;
     if (target > 0) this._stepTo(entry, target);
     if (entry.authoritative) this._schedule(entry, this.o.delayMs || 0);
+  }
+
+  _surrender(msg) {
+    const e = this.battles.get(msg.battleId);
+    if (e) this._applySurrender(e, msg.playerId, Number(msg.at) || 0);
+  }
+
+  /** 联防 helper surrender (server b.surrender): drop that side, stepping the replica to `at` first when it lags behind. */
+  _applySurrender(e, pid, at = 0) {
+    if (!e || !pid || !e.battle.surrenderPlayer || e.battle.finished) return;
+    if (at > 0 && e.battle.time + 1e-9 < at) this._stepTo(e, at);
+    e.battle.surrenderPlayer(pid);
   }
 
   _pool(msg) {
@@ -174,7 +189,7 @@ export function attachSimClients(h, opts = {}) {
     });
     clients.set(ps.playerId, c);
   }
-  const HANDLED = new Set(['b.start', 'b.pool', 'b.end']);
+  const HANDLED = new Set(['b.start', 'b.pool', 'b.end', 'b.surrender']);
   const pending = new Set();
   const deliver = (c, ps, msg) => {
     // delivered after the server call that produced it (a real socket is never re-entrant)

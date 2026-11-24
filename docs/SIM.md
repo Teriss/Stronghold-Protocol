@@ -71,7 +71,14 @@ const b = new Battle({
 while (!b.finished) b.step();      // 1 TICK = 1/30 game s; live battles run at the forced 2× = 60 ticks per real second
 b.snapshot();  b.drainEvents();   // every 3 ticks for watchers (§8.2 wire format)
 b.result();                        // BattleResult (DESIGN §5.1) — see §1.3
-b.forceEnd('forced' | 'timeout'); // 'timeout' converts remaining enemies to leaks
+b.forceEnd('forced' | 'timeout' | 'surrender');
+                                   // 'timeout' converts remaining enemies to leaks (never-spawned spawns are dropped
+                                   // into result().unspawned, no LP); 'surrender' (a player's own 投降, §1.4) leaks
+                                   // them all — on the field and still queued — and keeps result().reason 'timeout'.
+b.surrenderPlayer(playerId);       // 联防 helpers' 投降 (§1.4): that side's operators die where they stand (no body,
+                                   // no redeploy, no revive), its summons go with them, `result().perPlayer[playerId]
+                                   // .surrendered` is set; `b.isSurrendered(playerId)` reads it. The field fights on
+b.isSurrendered(playerId);
 b.fieldMeta();                     // { fieldId, kind, rect, stageId, units: UnitInfo[] } for m.field
 ```
 
@@ -557,6 +564,15 @@ recorded for the player whose half contains the goal it reached, with `sourcePla
   idles while another field may still empty the pool or the match's overtime drain — team LP, from 120 real s for all-human teams / 150 with an AI teammate — ends it); without a pool
   (sandboxes, tools) it still ends `cleared` when empty. `timeout`: `time ≥ timeLimit` —
   every living non-boss enemy becomes a leak; spawns that never happened are dropped from `total` and listed in `unspawned`.
+  `surrender` (`forceEnd('surrender')`, the match's 本回合投降): the same end at the current time, but the never-spawned
+  spawns are leaks too — the round is decided and every enemy it still owed is charged (`unspawned` stays empty, `total`
+  keeps them, each leak carries `spawned: false`) — so the 联防 stage re-enters them with the rest. `reason` stays
+  `'timeout'`.
+- `surrenderPlayer(playerId)` (a 联防 helper's 投降, `isSurrendered`): that player's operators die where they stand —
+  permanent removal with the death clip, no knocked-out body and no respawn — and its summons go with it. The player is
+  marked for the rest of the battle: `_deploy` / `redeploy` refuse it (so no 余烬 / 不屈 revival), `spawnToken` refuses
+  new summons, and `result().perPlayer[playerId].surrendered` is `true`. The teammate's units, the enemies and the clock
+  are untouched: the field fights on, and whoever the enemies get through is billed by the 联防's own settlement.
 - `leaked[].counted = false` for `notCountInTotal`/`unharmful`/boss parts (LP rules: normal rounds count only `counted`
   leaks, cap 10; boss rounds use `lpr`). `perfect = no counted leak`.
 - `battleEnd {result}` fires before the result is frozen: handlers may still call `addLayers`/`addCoins`.

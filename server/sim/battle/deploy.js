@@ -15,6 +15,8 @@ export class BattleDeploy {
    */
   _deploy(u, { initial = false, carry = null, tile = null, keepSp = null, preBattleAggroSeq = null, mobilePosition = null } = {}) {
     if ((u.alive && u.deployed) || u._removing) return false;
+    // 联防阶段投降: the side left the field for good — a death hook's revive / redeploy attempt is refused (surrenderPlayer)
+    if (this.isSurrendered(u.ownerId)) return false;
     const R0 = tile ? tile[0] : u.homeR, C0 = tile ? tile[1] : u.homeC;
     const mobile = u.kind === 'token' && u.mem?.lethaniaPursuit === true;
     if (mobile && (!mobilePosition || !Number.isFinite(mobilePosition.x) || !Number.isFinite(mobilePosition.y))) {
@@ -112,6 +114,45 @@ export class BattleDeploy {
     if (!unit || !unit.alive || unit.side !== 'ally') return;
     this._remove(unit, reason, null, permanent, dying);
   }
+
+  /**
+   * 联防阶段个人投降 (match rules: docs/design/match.md §联防阶段投降; caller: Match._surrenderUnite, both combat modes):
+   * the player's whole side leaves the shared field where it stands — every operator DIES on its tile (a death
+   * animation, but no knocked-out body: it is no knock-out and its respawn timer never runs) and its summons and devices
+   * go with it. The player is marked surrendered for the rest of the battle, so nothing it owns re-enters: `_deploy`
+   * refuses a death hook's revive (史尔特尔's 余烬, 不屈), the automatic redeploy never sees a body, and spawnToken /
+   * spawnDevice refuse new pieces. The teammate's side, the enemies and the clock are untouched: the field simply fights
+   * on with one half empty, and whatever gets through is billed where 联防 bills it (unite.js uniteSurvivors — each
+   * surviving enemy costs the player that leaked it). Idempotent; returns the number of units removed.
+   */
+  surrenderPlayer(pid) {
+    if (!pid) return 0;
+    if (!this._surrendered) this._surrendered = new Set();
+    if (this._surrendered.has(pid)) return 0;
+    this._surrendered.add(pid);
+    const pp = this._pp(pid);
+    if (pp) pp.surrendered = true;
+    let n = 0;
+    for (const u of this.allyUnits) {
+      if (!u || u.ownerId !== pid) continue;
+      if (u.alive) {
+        this.retreat(u, { reason: 'surrender', permanent: true, dying: true });
+        n++;
+      } else if (!u.removed) {
+        // knocked out and waiting for its redeploy (isDown): it never comes back, and its body no longer blocks a tile
+        u.removed = true;
+        u.respawnAt = Infinity;
+        u.removeReason = 'surrender';
+        this._ev(['die', u.id, 'surrender']);
+        this._toRelease.push(u);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /** Whether `pid` gave its side up in this battle (surrenderPlayer). */
+  isSurrendered(pid) { return !!(pid && this._surrendered && this._surrendered.has(pid)); }
 
   _remove(unit, reason, killer = null, permanent = false, dying = false) {
     this._cutAttackStand(unit);
@@ -272,7 +313,7 @@ export class BattleDeploy {
     const owner = timeout ? e.ownerId : this._ownerForTile([Math.round(e.y), Math.round(e.x)]) ?? e.ownerId;
     const pp = this._pp(owner) ?? this._pp(e.ownerId);
     if (pp) {
-      const entry = { enemyKey: e.defId, mods: e.mods ?? null, lpr: e.lpr ?? 1, sourcePlayerId: e.sourcePlayerId ?? e.ownerId, tag: e.tag ?? null, counted: !!e.counted || e.isBoss, boss: e.isBoss || undefined, spawned: true };
+      const entry = { enemyKey: e.defId, mods: e.mods ?? null, lpr: e.lpr ?? 1, sourcePlayerId: e.sourcePlayerId ?? e.ownerId, tag: e.tag ?? null, counted: !!e.counted || e.isBoss, boss: e.isBoss || undefined, spawned: e.spawned !== false };
       // born while a 联防 field ran (spawns.js): the leaker never sent it in, so it costs nobody LP and raises no ×N —
       // unite.js uniteSurvivors / spec.js uniteLeft filter it; every other reading keeps counting it as usual
       if (e.uniteRuntime) entry.uniteRuntime = true;

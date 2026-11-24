@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { PHASE } from '../../shared/constants.js';
 import { GEO } from '../../shared/constants.js';
 import { FakeBattle } from './fakeBattle.js';
+import { planUnite } from '../../server/match/unite.js';
 import { DATA, makeMatch, give, checkInvariants, chessOfTier, legalTileFor } from './harness.js';
 
 const normalFields = () => FakeBattle.instances.filter((b) => b.kind === 'normal');
@@ -235,3 +236,147 @@ test('error isolation: a battle that throws is force-ended as a timeout; a const
   assert.equal(m.round, 2, 'the match continues');
   m.dispose();
 });
+
+for (const clientCombat of [false, true]) {
+  test(`surrender bills every remaining enemy of the round, never-spawned ones included (sim, clientCombat=${clientCombat})`, () => {
+    const h = makeMatch({ mode: 'coop', humans: 2, fake: false, instant: false, clients: false, clientCombat }).start();
+    const m = h.m;
+    h.toPrep(1);
+    for (const pid of ['p_0', 'p_1']) m.handle(pid, { t: 'g.ready', ready: true });
+    h.run(() => m.phase === PHASE.COMBAT);
+    const own = m.fields.find((f) => f.fieldId === 'n:p_0');
+    const ps = h.ps('p_0');
+    const lp = ps.lp;
+    h.sched.advance(2000); // a couple of game seconds: the first enemies are on the field, the rest still queued
+    // client-side combat keeps the battle in the browser, so only the server-run mode can be read here
+    const queued = clientCombat ? null : own.battle._pending.length;
+    const onField = clientCombat ? 0 : own.battle.enemies.filter((e) => e.alive).length;
+    if (!clientCombat) assert.ok(queued > 0, 'the round still owes spawns');
+    assert.deepEqual(m.handle('p_0', { t: 'g.surrender', round: 1 }), { ok: true });
+    // the teammate gives up too, so nobody is perfect and the round settles on its own leaks (no 联防)
+    assert.deepEqual(m.handle('p_1', { t: 'g.surrender', round: 1 }), { ok: true });
+    h.run(() => m.phase === PHASE.SETTLE);
+    const res = m.lastResults.get('p_0');
+    const counted = res.leaked.filter((l) => l.counted !== false).length;
+    assert.equal(ps.stats.leaks, counted);
+    assert.equal(lp - ps.lp, Math.min(m.gd.lpCapPerRound, counted), 'the charge is the leaks, not a fixed 1');
+    assert.ok(counted > onField, 'the enemies that never spawned are billed too');
+    assert.ok(res.leaked.some((l) => l.spawned === false), 'the queued spawns are marked unspawned');
+    if (queued != null) assert.equal(counted, onField + queued, 'every enemy the round owed is one leak');
+    assert.equal(res.unspawned, undefined, 'nothing is dropped as unspawned');
+    assert.equal(res.killed + res.leaked.length, res.total, 'the whole round resolves as leaks');
+    assert.equal(res.perfect, false, 'a surrender breaks 完美作战');
+    // and the surrendered leaks still go through the ordinary 联防 planning: they re-enter for a perfect teammate
+    const perfect = { killed: 1, total: 1, leaked: [], perfect: true, layerGains: {}, coins: 0, damageDealt: 0, unitsEnd: [], unitStats: [] };
+    const plan = planUnite(m, new Map([['p_0', res], ['p_1', perfect]]));
+    assert.deepEqual(plan.leakers.map((p) => p.playerId), ['p_0']);
+    assert.deepEqual(plan.helpers.map((p) => p.playerId), ['p_1']);
+    assert.equal(plan.leaked.length, counted);
+    m.dispose();
+  });
+}
+
+for (const clientCombat of [false, true]) {
+  test(`联防 surrender: a helper's half leaves the field, the teammate fights on, the last one settles the round (clientCombat=${clientCombat})`, () => {
+    const h = makeMatch({
+      mode: 'coop', humans: 4, seed: 34, fake: true, clientCombat,
+      script: (b) => {
+        if (b.kind === 'normal') return { leaks: { p_0: 6, p_3: 12 } };
+        if (b.kind === 'unite') return { survivors: { p_0: 2, p_3: 11 } };
+        return {};
+      },
+    }).start();
+    const m = h.m;
+    h.toPrep(1);
+    h.drive(() => m.phase === PHASE.UNITE);
+    const ps = ['p_0', 'p_1', 'p_2', 'p_3'].map((id) => h.ps(id));
+    assert.deepEqual(m.unitePlan.helpers.map((p) => p.playerId), ['p_1', 'p_2']);
+    assert.deepEqual(m.unitePlan.leakers.map((p) => p.playerId).sort(), ['p_0', 'p_3']);
+    const f = m.fields.find((x) => x.kind === 'unite');
+    const lp = m.order.map((x) => x.lp);
+    const surrender = (pid) => m.handle(pid, { t: 'g.surrender', round: 1 });
+    // only a helper of the running 联防 may stand its half down
+    assert.equal(surrender('p_0').error, 'WRONG_PHASE');
+    assert.equal(f.surrendered?.size ?? 0, 0);
+    // the first helper gives up: the shared field goes on for the teammate, and every viewer is told (client combat)
+    assert.deepEqual(surrender('p_1'), { ok: true });
+    assert.deepEqual([...f.surrendered], ['p_1']);
+    assert.equal(f.live, true, 'the teammate still holds the field');
+    assert.ok(!f.done);
+    assert.equal(m.phase, PHASE.UNITE);
+    assert.equal(m.publicView().unite.surrendered.length, 1);
+    assert.equal(m.publicView().players.find((p) => p.playerId === 'p_1').status, 'surrendered');
+    assert.equal(m.publicView().players.find((p) => p.playerId === 'p_2').status, 'helping');
+    assert.equal(f.surrenders.length, 1);
+    assert.ok(Number.isFinite(f.surrenders[0].at) && f.surrenders[0].at >= 0);
+    if (clientCombat) {
+      const frames = h.sent.filter(([, x]) => x.t === 'b.surrender').map(([, x]) => x);
+      assert.equal(frames.length, m.watchersOf('u').length, 'every viewer of the 联防 field');
+      assert.ok(frames.every((x) => x.playerId === 'p_1' && x.fieldId === 'u' && x.battleId === f.battleId));
+      // a replica that joins later rebuilds the field from its spec: the surrender travels with the b.start
+      assert.equal(m._sendStart('p_3', f), true);
+      assert.deepEqual(h.lastTo('p_3', 'b.start').surrenders.map((s) => s.playerId), ['p_1']);
+    } else {
+      assert.equal(f.battle.isSurrendered('p_1'), true);
+      assert.equal(f.battle.isSurrendered('p_2'), false);
+    }
+    // a second press by the same helper changes nothing
+    assert.deepEqual(surrender('p_1'), { ok: true });
+    assert.equal(f.surrenders.length, 1);
+    assert.equal(m.phase, PHASE.UNITE);
+    // the last helper stands down: the field ends as its timeout, so every enemy still owed is billed to its source
+    assert.deepEqual(surrender('p_2'), { ok: true });
+    h.run(() => m.phase === PHASE.SETTLE);
+    assert.equal(m.phase, PHASE.SETTLE);
+    assert.equal(f.live, false);
+    assert.equal(ps[0].lp, lp[0] - 2, 'p_0: its 2 survivors');
+    assert.equal(ps[3].lp, lp[3] - 10, 'p_3: 11 survivors capped at 10');
+    assert.deepEqual([ps[1].lp, ps[2].lp], [lp[1], lp[2]], 'the helpers lose nothing');
+    assert.deepEqual(m.uniteResultView.losses, { p_0: lp[0] - ps[0].lp, p_1: 0, p_2: 0, p_3: lp[3] - ps[3].lp });
+    checkInvariants(m);
+    m.dispose();
+  });
+}
+
+for (const clientCombat of [false, true]) {
+  test(`surrender times out only the caller's normal field (clientCombat=${clientCombat})`, () => {
+    const h = makeMatch({
+      mode: 'coop', humans: 2, fake: true, clients: false, instant: false, clientCombat,
+      script: (b) => ({
+        duration: 6, leaks: b.fieldId === 'n:p_0' ? { p_0: 2 } : {}, survivors: { p_0: 1 },
+      }),
+    }).start();
+    const m = h.m;
+    h.toPrep(1);
+    const surrender = { t: 'g.surrender', round: 1 };
+    assert.equal(m.handle('p_0', surrender).error, 'WRONG_PHASE');
+    for (const pid of ['p_0', 'p_1']) m.handle(pid, { t: 'g.ready', ready: true });
+    h.run(() => m.phase === PHASE.COMBAT);
+    const [own, teammate] = m.fields;
+    const lp = m.order.map((ps) => ps.lp);
+    h.sched.advance(500);
+    assert.equal(m.handle('p_0', { ...surrender, round: 2 }).error, 'WRONG_PHASE');
+    assert.deepEqual(m.handle('p_0', surrender), { ok: true });
+    const result = clientCombat ? own.result : own.battle.result();
+    assert.equal(result.reason, 'timeout');
+    assert.ok(result.time > 0 && result.time < 6);
+    assert.equal(own.live, false);
+    assert.equal(teammate.live, true);
+    assert.equal(m.handle('p_0', surrender).error, 'WRONG_PHASE');
+    if (clientCombat) {
+      assert.equal(h.lastTo('p_0', 'b.end').battleId, own.battleId);
+      assert.ok(!h.lastTo('p_1', 'b.end'));
+      m._runOnServer(teammate, 'test');
+    }
+    h.run(() => m.phase === PHASE.SETTLE || m.phase === PHASE.UNITE);
+    assert.equal(m.phase, PHASE.UNITE);
+    assert.deepEqual(m.unitePlan.helpers.map((ps) => ps.playerId), ['p_1']);
+    assert.deepEqual(m.unitePlan.leakers.map((ps) => ps.playerId), ['p_0']);
+    assert.equal(m.unitePlan.leaked.length, 2);
+    assert.deepEqual(m.order.map((ps) => ps.lp), lp, 'LP is unchanged before unite settles');
+    if (clientCombat) m._runOnServer(m.fields[0], 'test');
+    h.run(() => m.phase === PHASE.SETTLE);
+    assert.deepEqual(m.order.map((ps) => ps.lp), [lp[0] - 1, lp[1]]);
+    m.dispose();
+  });
+}
