@@ -6,7 +6,7 @@
 
 import { requiresTraitLayerAuthority } from '../operatorTraits.js';
 import { PHASE } from '../../../shared/constants.js';
-import { DeadBattle, syntheticResult, RESULT_GRACE_MS, HARD_CAP_SECONDS, HeadlessJob } from '../fields.js';
+import { DeadBattle, syntheticResult, RESULT_GRACE_MS, HARD_CAP_SECONDS, HeadlessJob, metricsAt } from '../fields.js';
 import { TICK } from '../../sim/constants.js';
 import { buildBattleSpec, createBattleFromSpec } from '../../sim/spec.js';
 import { testSlice } from '../testTrace.js';
@@ -187,6 +187,7 @@ export class MatchClientCombat {
     f.job = job;
     f.battle = job.battle;
     f.timeline = job.timeline; // grows while the job runs (the teammates' progress UI reads it on the field clock)
+    f.metricsTimeline = job.metricsTimeline;
     if (f.sliceTimer) { this.cancel(f.sliceTimer); f.sliceTimer = null; }
     const complete = () => {
       if (f.job !== job || f.done) return;
@@ -196,6 +197,7 @@ export class MatchClientCombat {
       f.result = run.result;
       f.resultSource = 'server';
       f.timeline = run.timeline;
+      f.metricsTimeline = run.metricsTimeline;
       f.endGt = Number(run.battle.time) || 0;
       this._armRelease(f);
     };
@@ -223,6 +225,22 @@ export class MatchClientCombat {
     const tick = () => {
       this._progressTimer = null;
       if (!this.fields.some((f) => f.cc && f.mode === 'server' && !f.done && f.timeline)) return;
+      if (!this.isSolo) {
+        for (const f of this.fields) {
+          if (!f.cc || f.mode !== 'server' || f.done || !f.metricsTimeline) continue;
+          const sample = metricsAt(f.metricsTimeline, this._fieldElapsed(f));
+          if (!sample || sample.gt <= 0) continue;
+          this.broadcast({
+            t: 'm.combatStats',
+            battleId: f.battleId || `${this.round}:${f.fieldId}`,
+            round: this.round,
+            kind: f.kind,
+            seconds: sample.gt,
+            players: sample.players,
+            live: true,
+          });
+        }
+      }
       this.markPublic();
       this._progressTimer = this.later(1000, tick);
     };
@@ -269,6 +287,7 @@ export class MatchClientCombat {
     this._clearFieldTimers(f);
     if (!f.result) f.result = syntheticResult(f.players, { bossBy: f.bossBy });
     f.progress.done = true;
+    this._broadcastCombatStats(f, f.result);
     this.markPublic();
     this._maybeFieldsDone();
   }

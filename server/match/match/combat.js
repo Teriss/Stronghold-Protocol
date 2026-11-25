@@ -161,6 +161,34 @@ export class MatchCombat {
 
   combatDone(runner) { this._finishCombat((f) => runner.resultOf(f)); }
 
+  /** Broadcast compact per-player unit damage/healing after a co-op field ends (for team 作战统计). */
+  _broadcastCombatStats(f, res) {
+    if (this.isSolo || !f || !res || !res.perPlayer) return;
+    const players = {};
+    for (const pid of f.players) {
+      const pp = res.perPlayer[pid];
+      if (!pp || !Array.isArray(pp.unitStats)) continue;
+      players[pid] = pp.unitStats
+        .filter((u) => u && ((Number(u.dmg) || 0) > 0 || (Number(u.heal) || 0) > 0))
+        .map((u) => ({
+          uid: u.uid ?? null,
+          defId: u.defId || null,
+          name: u.name || null,
+          kind: u.kind || 'op',
+          dmg: Math.round(Number(u.dmg) || 0),
+          heal: Math.round(Number(u.heal) || 0),
+        }));
+    }
+    this.broadcast({
+      t: 'm.combatStats',
+      battleId: f.battleId || `${this.round}:${f.fieldId}`,
+      round: this.round,
+      kind: f.kind,
+      seconds: Number.isFinite(res.time) && res.time > 0 ? Math.round(res.time * 100) / 100 : 0,
+      players,
+    });
+  }
+
   /** Every normal field has its result: record them, then 联防 or SETTLE. */
   _finishCombat(resultOf) {
     if (this.phase !== PHASE.COMBAT) return;
@@ -168,6 +196,7 @@ export class MatchCombat {
     for (const f of this.fields) {
       const res = resultOf(f);
       this._collectSimErrors(f, res);
+      this._broadcastCombatStats(f, res);
       for (const pid of f.players) {
         const pp = res.perPlayer && res.perPlayer[pid];
         this.lastResults.set(pid, pp || { killed: 0, total: 0, leaked: [], perfect: true, layerGains: {}, coins: 0, damageDealt: 0, unitsEnd: [], unitStats: [] });

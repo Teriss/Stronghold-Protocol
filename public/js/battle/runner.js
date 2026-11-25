@@ -93,7 +93,7 @@ import { recordError, setBattleSource } from '../diag.js';
 import { loadBrowserSim } from './simLoader.js';
 import { data as gameData } from '../data.js';
 import { InPageSimHost, WorkerSimHost } from './simHost.js';
-import { trackCombat, combineCombat } from './metrics.js';
+import { trackCombat, combineCombat, serverCombatRecord } from './metrics.js';
 import { t } from '../../../shared/i18n.js';
 import { leaderOpsFromBattle } from '../../../shared/leaderOps.js';
 export { loadBrowserSim, SIM_DATA_FILES } from './simLoader.js';
@@ -207,11 +207,35 @@ export function createBattleRunner(deps) {
   let combatSeq = 0;
   const rememberCombat = (e) => {
     if (!e.combatMetrics) return;
-    const record = e.combatMetrics();
-    if (!(combatHistory.get(e.battleId)?.seconds > record.seconds)) {
+    const record = {
+      ...e.combatMetrics(),
+      round: Number.isInteger(e.spec?.round) && e.spec.round > 0 ? e.spec.round : lastRound,
+      kind: e.kind || 'normal',
+      source: 'local',
+    };
+    const prev = combatHistory.get(e.battleId);
+    if (prev?.source === 'server' || !(prev?.seconds > record.seconds)) {
       combatOrder.set(e.battleId, ++combatSeq);
       combatHistory.set(e.battleId, record);
     }
+  };
+  const lookupMetricUnit = (kind, defId) => {
+    if (!defId || !gameData || typeof gameData.lookup !== 'function') return null;
+    return gameData.lookup(kind === 'token' ? 'tokens' : 'chess', defId) || gameData.lookup('chess', defId) || null;
+  };
+  const onCombatStats = (msg) => {
+    if (!metricsEnabled() || !msg || typeof msg.battleId !== 'string') return;
+    const record = serverCombatRecord(msg, lookupMetricUnit);
+    if (!record) return;
+    const prev = combatHistory.get(msg.battleId);
+    if (prev && prev.source === 'local' && record.owners.every((id) => (prev.owners || []).includes(id))) {
+      if (!prev.round && record.round) prev.round = record.round;
+      return;
+    }
+    if (prev && prev.source === 'server' && !prev.live && record.live) return;
+    if (prev && prev.source === 'server' && prev.live && record.live && prev.seconds > record.seconds) return;
+    if (!record.live || !combatOrder.has(msg.battleId)) combatOrder.set(msg.battleId, ++combatSeq);
+    combatHistory.set(msg.battleId, record);
   };
   const forgetCombat = () => { combatHistory.clear(); combatOrder.clear(); combatSeq = 0; };
   // Opt-in (设置「作战统计」, default off). A boolean deps.combatMetrics pins a test and ignores setCombatMetrics.
@@ -554,6 +578,25 @@ export function createBattleRunner(deps) {
       msg.leaks = Math.min(1e6, p.leaks);
       // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, up to MAX_SEATS players)
       if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, MAX_SEATS));
+    }
+    if ((store?.get?.()?.match?.public?.players?.length || 0) > 1 && Array.isArray(e.battle?.players) && (force || t - (e.lastUnitsAt || 0) >= 1000)) {
+      e.lastUnitsAt = t;
+      const units = {};
+      for (const ps of e.battle.players) {
+        const arr = (ps.units || [])
+          .filter((u) => u && ((Number(u.stats?.dmg) || 0) > 0 || (Number(u.stats?.heal) || 0) > 0))
+          .slice(0, 48)
+          .map((u) => ({
+            uid: u.uid ?? null,
+            defId: u.defId || null,
+            name: u.name || null,
+            kind: u.kind || 'op',
+            dmg: Math.round(Number(u.stats?.dmg) || 0),
+            heal: Math.round(Number(u.stats?.heal) || 0),
+          }));
+        if (arr.length) units[ps.playerId] = arr;
+      }
+      if (Object.keys(units).length) msg.units = units;
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }
@@ -1036,6 +1079,7 @@ export function createBattleRunner(deps) {
     offs.push(net.on('b.pool', onPool));
     offs.push(net.on('b.end', onEnd));
     offs.push(net.on('b.surrender', onSurrender));
+    offs.push(net.on('m.combatStats', onCombatStats));
     // the session is back (reconnect / resume): results lost with the old socket go out again
     offs.push(net.on('status', (st) => { if (st && st.status === 'online') redeliver(); }));
   }
@@ -1093,11 +1137,49 @@ export function createBattleRunner(deps) {
      */
     combatMetrics({ scope = 'match', ownerId = null } = {}) {
       const localEntries = [...entries.values(), ...pending.values()];
+      const activeRound = lastRound || (Number.isInteger(cur?.spec?.round) ? cur.spec.round : 0);
+      const localBattleIds = new Set(localEntries.map((entry) => entry.battleId));
+      const collectByOwners = (candidates) => {
+        // Keep at most one record per owner (newest first) so two battles for the same player never double-count.
+        const out = [];
+        const seen = new Set();
+        for (const rec of candidates) {
+          const owners = rec.owners || [];
+          if (owners.length && owners.every((id) => seen.has(id))) continue;
+          out.push(rec);
+          for (const id of owners) seen.add(id);
+        }
+        return out;
+      };
       if (scope === 'battle') {
+        if (ownerId == null) {
+          const candidates = [];
+          for (const e of [...localEntries].sort((a, b) => b.seq - a.seq)) if (e.combatMetrics) candidates.push(e.combatMetrics());
+          if (activeRound > 0) {
+            const hist = [...combatHistory.entries()]
+              .filter(([id, rec]) => !localBattleIds.has(id) && rec.round === activeRound)
+              .sort((a, b) => (combatOrder.get(b[0]) ?? 0) - (combatOrder.get(a[0]) ?? 0))
+              .map(([, rec]) => rec);
+            candidates.push(...hist);
+          }
+          if (!candidates.length && cur?.combatMetrics) candidates.push(cur.combatMetrics());
+          return combineCombat(collectByOwners(candidates), null);
+        }
         // scouting another field must not replace the player's own current battle statistics
-        const e = ownerId == null ? cur : localEntries.filter((entry) => entry.members.includes(ownerId))
+        const e = localEntries.filter((entry) => entry.members.includes(ownerId))
           .sort((a, b) => b.seq - a.seq)[0];
-        return combineCombat(e?.combatMetrics ? [e.combatMetrics()] : [], ownerId);
+        if (e?.combatMetrics) return combineCombat([e.combatMetrics()], ownerId);
+        if (activeRound > 0) {
+          let best = null;
+          let bestOrder = -1;
+          for (const [id, rec] of combatHistory) {
+            if (rec.round !== activeRound || !(rec.owners || []).includes(ownerId)) continue;
+            const order = combatOrder.get(id) ?? 0;
+            if (order > bestOrder) { bestOrder = order; best = rec; }
+          }
+          if (best) return combineCombat([best], ownerId);
+        }
+        return combineCombat([], ownerId);
       }
       if (scope === 'last') {
         // 上一场战斗: the most recent battle that ended — a battle still on screen at RESULT keeps precedence over the
@@ -1105,23 +1187,45 @@ export function createBattleRunner(deps) {
         const own = (entry) => ownerId == null || entry.members.includes(ownerId);
         const ended = localEntries.filter((entry) => entry.combatMetrics && own(entry) && entry.battle?.finished)
           .sort((a, b) => b.seq - a.seq)[0];
-        if (ended?.combatMetrics) return combineCombat([ended.combatMetrics()], ownerId);
+        if (ended?.combatMetrics) {
+          const endedRec = {
+            ...ended.combatMetrics(),
+            round: Number.isInteger(ended.spec?.round) && ended.spec.round > 0 ? ended.spec.round : lastRound,
+            kind: ended.kind || 'normal',
+          };
+          if (ownerId == null && endedRec.round > 0) {
+            const hist = [...combatHistory.entries()]
+              .filter(([id, rec]) => !localBattleIds.has(id) && rec.round === endedRec.round && rec.kind === endedRec.kind)
+              .sort((a, b) => (combatOrder.get(b[0]) ?? 0) - (combatOrder.get(a[0]) ?? 0))
+              .map(([, rec]) => rec);
+            return combineCombat(collectByOwners([endedRec, ...hist]), null);
+          }
+          return combineCombat([endedRec], ownerId);
+        }
         let best = null;
         let bestOrder = -1;
         for (const [id, record] of combatHistory) {
-          if (localEntries.some((entry) => entry.battleId === id)) continue;
+          if (localBattleIds.has(id) || record.live) continue;
           // A watched (spectated / evicted replica) snapshot does not list the own player: it is skipped here instead
           // of winning the order race and leaving the row list empty.
           if (ownerId != null && !(record.owners || []).includes(ownerId)) continue;
           const order = combatOrder.get(id) ?? 0;
           if (order > bestOrder) { bestOrder = order; best = record; }
         }
+        if (ownerId == null && best && best.round > 0) {
+          const hist = [...combatHistory.entries()]
+            .filter(([id, record]) => !localBattleIds.has(id) && !record.live && record.round === best.round && record.kind === best.kind)
+            .sort((a, b) => (combatOrder.get(b[0]) ?? 0) - (combatOrder.get(a[0]) ?? 0))
+            .map(([, record]) => record);
+          return combineCombat(collectByOwners(hist), null);
+        }
         return combineCombat(best ? [best] : [], ownerId);
       }
       const records = new Map(combatHistory);
       for (const e of localEntries) if (e.combatMetrics) {
         const record = e.combatMetrics();
-        if (!(records.get(e.battleId)?.seconds > record.seconds)) records.set(e.battleId, record);
+        const prev = records.get(e.battleId);
+        if (prev?.source === 'server' || !(prev?.seconds > record.seconds)) records.set(e.battleId, record);
       }
       return combineCombat(records.values(), ownerId);
     },

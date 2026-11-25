@@ -286,9 +286,24 @@ test('选择同盟方式 creates the room itself: the lobby never stacks 选择�
 });
 
 test('no server-only features: accounts, friends, federation, matchmaking, 无限火力, Android', () => {
-  for (const re of [/accounts\.js/, /friends\.js/, /federation/, /matchmaking/i, /match\.queue/, /randomMode/, /AndroidNative/, /__onRoomFound/, /room\.list/]) {
+  for (const re of [/accounts\.js/, /friends\.js/, /federation/, /matchmaking/i, /match\.queue/, /randomMode/, /AndroidNative/, /__onRoomFound/]) {
     assert.doesNotMatch(lobbySrc, re, String(re));
   }
+});
+
+test('选择同盟方式: includes 查看所有房间 entry and moves 休整不限时 / 无尽模式 out of create screen', () => {
+  const browsed = [];
+  const v = ally({ onBrowse: () => browsed.push(true) });
+  const browse = find(v, (x) => x.props?.['data-testid'] === 'alliance-browse')[0];
+  assert.ok(browse, '查看所有房间 button exists');
+  assert.ok(textOf(browse).includes('查看所有房间'));
+  assert.ok(!browse.props.disabled);
+  browse.props.onClick();
+  assert.deepEqual(browsed, [true]);
+  assert.ok(find(ally({ online: false }), (x) => x.props?.['data-testid'] === 'alliance-browse')[0].props.disabled, 'offline disables browse');
+  assert.equal(find(v, (x) => x.props?.['data-testid'] === 'alliance-prep-unlimited').length, 0, '休整不限时 moved to room settings');
+  assert.equal(find(v, (x) => x.props?.['data-testid'] === 'alliance-endless').length, 0, '无尽模式 moved to room settings');
+  assert.equal(byClass(v, 'ally-capacity').length, 0, '同盟人数上限 moved to room settings');
 });
 
 test('lobby.css: text follows 文字大小 (var(--t)), no !important, no :has()', () => {

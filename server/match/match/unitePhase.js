@@ -32,6 +32,7 @@ export class MatchUnite {
         if (this.phase !== PHASE.UNITE) return;
         const res = runner.resultOf(this.fields[0]);
         this._collectSimErrors(this.fields[0], res);
+        this._broadcastCombatStats(this.fields[0], res);
         this.fields[0].live = false;
         this.deadline = 0;
         this.markPublic();
@@ -91,6 +92,7 @@ export class MatchUnite {
     const f = this.fields[0];
     const res = f.result;
     this._collectSimErrors(f, res);
+    this._broadcastCombatStats(f, res);
     this._stopClientCombat();
     f.live = false;
     this.deadline = 0;

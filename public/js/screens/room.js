@@ -166,6 +166,29 @@ export function aiTakeoverOption(room, myId) {
   return { on: room.aiTakeoverEnabled === true, editable: room.hostId != null && room.hostId === myId && !room.inMatch };
 }
 
+/** Co-op room option 「休整不限时」: host toggles before the match; everybody else sees it read-only. */
+export function prepUnlimitedOption(room, myId) {
+  if (!room || room.mode === 'solo') return null;
+  return { on: room.prepUnlimited === true, editable: room.hostId != null && room.hostId === myId && !room.inMatch };
+}
+
+/** Co-op room option 「无尽模式」: host toggles before the match; everybody else sees it read-only. */
+export function endlessOption(room, myId) {
+  if (!room || room.mode === 'solo') return null;
+  return { on: room.endless === true, editable: room.hostId != null && room.hostId === myId && !room.inMatch };
+}
+
+/** Co-op room option 「同盟人数上限」 (4 / 6 / 8): host changes before the match; everybody else sees it read-only. */
+export function capacityOption(room, myId) {
+  if (!room || room.mode === 'solo') return null;
+  const occupied = normalizeSeats(room).filter(Boolean).length;
+  return {
+    value: COOP_ROOM_CAPACITIES.includes(room.capacity) ? room.capacity : DEFAULT_COOP_CAPACITY,
+    occupied,
+    editable: room.hostId != null && room.hostId === myId && !room.inMatch,
+  };
+}
+
 /**
  * The solo room option 「不限时」 (DESIGN §35.23.10; room.setSoloUnlimited). null unless the room is solo AND `timed`
  * is exactly true (a version whose solo is timed, and whose data is on screen). Off when room.state omits the key.
@@ -417,11 +440,41 @@ function AiTakeoverToggle({ option, busy, onToggle }) {
   </div>`;
 }
 
+/** The 「休整不限时」 switch (co-op): the host toggles it, everybody else sees its state. */
+function PrepUnlimitedToggle({ option, busy, onToggle }) {
+  if (!option) return null;
+  return html`<div class="ailast">
+    <${Tooltip} text=${t('每轮休整须全员就绪后才开始作战')}>
+      <button type="button" role="switch" aria-checked=${option.on ? 'true' : 'false'} data-testid="room-prep-unlimited"
+          class=${`dpick__opt ailast__opt${option.on ? ' is-active' : ''}`} disabled=${!option.editable || !!busy}
+          onClick=${() => option.editable && onToggle(!option.on)}>
+        <${Icon} name="check" class=${option.on ? 'is-on' : ''} />${t('休整不限时')}
+      </button>
+    <//>
+    ${option.editable ? null : html`<span class="t-dim">${t('由创建者设置')}</span>`}
+  </div>`;
+}
+
+/** The 「无尽模式」 switch (co-op): the host toggles it, everybody else sees its state. */
+function EndlessToggle({ option, busy, onToggle }) {
+  if (!option) return null;
+  return html`<div class="ailast">
+    <${Tooltip} text=${t('通关后投票续轮，保留养成并更换地图')}>
+      <button type="button" role="switch" aria-checked=${option.on ? 'true' : 'false'} data-testid="room-endless"
+          class=${`dpick__opt ailast__opt${option.on ? ' is-active' : ''}`} disabled=${!option.editable || !!busy}
+          onClick=${() => option.editable && onToggle(!option.on)}>
+        <${Icon} name="check" class=${option.on ? 'is-on' : ''} />${t('无尽模式')}
+      </button>
+    <//>
+    ${option.editable ? null : html`<span class="t-dim">${t('由创建者设置')}</span>`}
+  </div>`;
+}
+
 /**
  * ⚙ of the bottom pill (co-op): 同盟设置 — the 模拟难度 (opens 选择模拟协议: the host's 确认, the others' read-only view)
- * and the 「AI 队友最后选择」 switch. Closes on a click outside it or Esc.
+ * and the co-op switches (允许观战者接替 AI, 休整不限时, 无尽模式, AI 队友最后选择). Closes on a click outside it or Esc.
  */
-function RoomOptions({ option, takeoverOption, onAiTakeover, soloOption = null, room, isHost, busy, onAiLast, onSoloUnlimited, onDifficulty, onClose, version = null }) {
+function RoomOptions({ option, takeoverOption, onAiTakeover, prepOption = null, onPrepUnlimited, endlessOpt = null, onEndless, capOption = null, onCapacity, soloOption = null, room, isHost, busy, onAiLast, onSoloUnlimited, onDifficulty, onClose, version = null }) {
   const info = difficultyInfo(room.mode, room.difficulty);
   const title = soloOption ? t('模拟设置') : t('同盟设置');
   useEffect(() => {
@@ -442,6 +495,21 @@ function RoomOptions({ option, takeoverOption, onAiTakeover, soloOption = null, 
       </button>
       ${isHost ? null : html`<span class="t-dim">${t('由创建者选择')}</span>`}
     </div>`}
+    ${!soloOption && capOption ? html`<div class="rs-opts__row" data-testid="room-opt-capacity">
+      <span class="rs-opts__k">${t('同盟人数上限')}</span>
+      <div class="rs-opts__caps" role="group" aria-label=${t('同盟人数上限')}>
+        ${COOP_ROOM_CAPACITIES.map((value) => {
+          const tooSmall = value < capOption.occupied;
+          const active = capOption.value === value;
+          return html`<button key=${value} type="button" class=${`rs-opts__cap num${active ? ' is-active' : ''}`}
+            aria-pressed=${active ? 'true' : 'false'}
+            disabled=${!capOption.editable || !!busy || tooSmall}
+            title=${tooSmall ? t('当前席位人数超过该上限') : capOption.editable ? t('同盟人数上限') : t('由创建者设置')}
+            onClick=${() => capOption.editable && !active && onCapacity(value)}>${value}</button>`;
+        })}
+      </div>
+      ${capOption.editable ? null : html`<span class="t-dim">${t('由创建者设置')}</span>`}
+    </div>` : null}
     ${!soloOption && version ? html`<div class="rs-opts__row" data-testid="room-opt-version">
       <span class="rs-opts__k">${t('版本')}</span>
       <${Tooltip} text=${version.why}>
@@ -453,10 +521,8 @@ function RoomOptions({ option, takeoverOption, onAiTakeover, soloOption = null, 
       ${version.editable ? null : html`<span class="t-dim">${t('由创建者发起')}</span>`}
     </div>` : null}
     <${AiTakeoverToggle} option=${takeoverOption} busy=${busy} onToggle=${onAiTakeover} />
-    ${room.mode === 'coop' ? html`<div class="rs-opts__row">
-      <span class="rs-opts__k">${t('休整不限时')}</span>
-      <span class="t-dim" data-testid="room-prep-unlimited">${room.prepUnlimited ? t('开启') : t('关闭')}</span>
-    </div>` : null}
+    <${PrepUnlimitedToggle} option=${prepOption} busy=${busy} onToggle=${onPrepUnlimited} />
+    <${EndlessToggle} option=${endlessOpt} busy=${busy} onToggle=${onEndless} />
     ${soloOption
       ? html`<${SoloUnlimitedToggle} option=${soloOption} busy=${busy} onToggle=${onSoloUnlimited} />`
       : html`<${AiLastToggle} option=${option} busy=${busy} onToggle=${onAiLast} />`}
@@ -583,6 +649,9 @@ export function RoomScreen() {
   };
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
   const setAiTakeover = (on) => run('aihandover', () => net.request('room.setAiTakeover', { on }));
+  const setPrepUnlimited = (on) => run('prepunlimited', () => net.request('room.setPrepUnlimited', { on }));
+  const setEndless = (on) => run('endless', () => net.request('room.setEndless', { on }));
+  const setCapacity = (capacity) => run('cap', () => net.request('room.setCapacity', { capacity }));
   const setAiLast = (on) => run('ailast', () => net.request('room.setAiPicksLast', { on }));
   // the room is the authority; the lobby card reads the same pref the next time this browser creates a solo room
   const setSoloUnlimited = async (on) => {
@@ -788,7 +857,11 @@ export function RoomScreen() {
             disabled=${versionCtl.disabled} onClick=${versionCtl.onOpen} aria-label=${t('游戏版本：{name}', { name: versionLabel(curVersion) })}><${Icon} name="book" /><span class="rs-pill__vername">${versionLabel(curVersion)}</span></button><//>` : null}
           ${aiLast || soloOpt ? html`<button type="button" class=${`rs-pill__gear${opts ? ' is-on' : ''}`} onClick=${() => setOpts((v) => !v)} title=${aiLast ? t('同盟设置') : t('模拟设置')} aria-label=${aiLast ? t('同盟设置') : t('模拟设置')}
             aria-expanded=${opts ? 'true' : 'false'}><${GearGlyph} /></button>` : null}
-          ${opts && (aiLast || soloOpt) ? html`<${RoomOptions} takeoverOption=${aiTakeoverOption(room, me.playerId)} onAiTakeover=${setAiTakeover} option=${aiLast} soloOption=${soloOpt} room=${room} isHost=${facts.isHost} busy=${busy} onAiLast=${setAiLast}
+          ${opts && (aiLast || soloOpt) ? html`<${RoomOptions} takeoverOption=${aiTakeoverOption(room, me.playerId)} onAiTakeover=${setAiTakeover}
+            prepOption=${prepUnlimitedOption(room, me.playerId)} onPrepUnlimited=${setPrepUnlimited}
+            endlessOpt=${endlessOption(room, me.playerId)} onEndless=${setEndless}
+            capOption=${capacityOption(room, me.playerId)} onCapacity=${setCapacity}
+            option=${aiLast} soloOption=${soloOpt} room=${room} isHost=${facts.isHost} busy=${busy} onAiLast=${setAiLast}
             onSoloUnlimited=${setSoloUnlimited} onDifficulty=${openProto} onClose=${() => setOpts(false)} version=${versionCtl} />` : null}
         </div>
       </div>

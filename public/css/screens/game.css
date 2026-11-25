@@ -1080,7 +1080,31 @@
 .combat-metrics__scopes { display: flex; flex: 1; min-width: 0; }
 .combat-metrics__scopes button { flex: 1; min-width: 0; padding: 4px 6px; min-height: 32px; color: var(--text-lo); background: var(--bg-1); border: 1px solid var(--line-2); white-space: nowrap; font-size: inherit; }
 .combat-metrics__scopes button[aria-pressed="true"] { background: var(--mint-900); color: var(--mint-400); border-color: var(--mint-700); }
-.combat-metrics__totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: none; gap: 8px; padding: 0 max(.14rem, calc(10px * var(--sp-ui, 1))) 8px; }
+.combat-metrics__players { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 8px; }
+.combat-metrics__avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: max(.42rem, 34px);
+  height: max(.42rem, 34px);
+  padding: 0;
+  color: var(--text-lo);
+  background: var(--bg-1);
+  border: 2px solid var(--line-2);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.combat-metrics__avatar .pavatar { width: 100%; height: 100%; border: 0; }
+.combat-metrics__avatar[aria-pressed="true"] { border-color: var(--mint-400); box-shadow: 0 0 0 1px var(--mint-400); color: var(--mint-400); }
+.combat-metrics__avatar--all { font-family: var(--font-display); font-size: max(calc(.13 * var(--t)), 11px); font-weight: 800; letter-spacing: .04em; background: var(--bg-2); }
+.combat-metrics__avatar--all[aria-pressed="true"] { background: var(--mint-900); color: var(--mint-400); }
+.combat-metrics__allview { display: inline-flex; margin-left: auto; }
+.combat-metrics__allview button { padding: 3px 8px; min-height: 28px; color: var(--text-lo); background: var(--bg-1); border: 1px solid var(--line-2); font-size: max(calc(.12 * var(--t)), 11px); white-space: nowrap; cursor: pointer; }
+.combat-metrics__allview button + button { border-left: 0; }
+.combat-metrics__allview button[aria-pressed="true"] { background: var(--mint-900); color: var(--mint-400); border-color: var(--mint-700); }
+.combat-metrics__totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: none; gap: 8px 18px; padding: 0 max(.14rem, calc(10px * var(--sp-ui, 1))) 8px; }
 .combat-metrics__totals span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; color: var(--text-lo); }
 .combat-metrics__totals b { font-family: var(--font-num); color: var(--text-hi); font-size: max(calc(.18 * var(--t)), 14px); overflow-wrap: anywhere; }
 .combat-metrics__totals span:last-child b { color: var(--mint-400); }
@@ -1095,10 +1119,11 @@
 .combat-metrics__list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 max(.14rem, calc(10px * var(--sp-ui, 1))); list-style: none; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .combat-metrics__row { display: grid; grid-template-columns: max(.2rem, 18px) max(.42rem, 30px) minmax(0, 1fr); gap: max(.08rem, calc(6px * var(--sp-ui, 1))); align-items: center; padding: max(.09rem, calc(7px * var(--sp-ui, 1))) 0; border-top: 1px solid var(--line); }
 .combat-metrics__rank { align-self: start; color: var(--text-lo); font-family: var(--font-num); padding-top: 2px; }
-.combat-metrics__row > .uthumb { width: max(.42rem, 30px); height: max(.42rem, 30px); }
+.combat-metrics__row > .uthumb, .combat-metrics__row > .pavatar { width: max(.42rem, 30px); height: max(.42rem, 30px); }
 .combat-metrics__unit { min-width: 0; }
 .combat-metrics__name { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .combat-metrics__name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-hi); }
+.combat-metrics__owner { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-lo); font-size: max(calc(.11 * var(--t)), 10px); }
 .combat-metrics__bar { display: flex; width: 100%; height: max(.05rem, 5px); margin: 5px 0; background: var(--bg-4); overflow: hidden; }
 .combat-metrics__segment { flex: none; height: 100%; background: var(--damage-color); }
 .combat-metrics__values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; font-family: var(--font-num); font-variant-numeric: tabular-nums; }

@@ -248,15 +248,19 @@ const CLOSE_REASON = {
   kicked: N_('你已被移出同盟'), ended: N_('模拟已结束'), expired: N_('同盟已过期'), shutdown: N_('服务器维护中，同盟已关闭'),
 };
 
-function receiveChat(msg, messages) {
+function receiveChat(msg, messages, live = false) {
   const s = store.get();
   if (typeof msg.matchId !== 'string' || !s.room?.seats?.some((seat) => seat?.playerId === s.me.playerId)) return;
   if (s.room.inMatch && s.room.chatId !== msg.matchId) return;
   if (!s.room.inMatch && !s.match.result) return;
   const previous = s.chat?.id === msg.matchId ? s.chat.messages : [];
   const bySeq = new Map(previous.map((line) => [line.seq, line]));
+  const now = live ? Date.now() : 0;
   for (const line of messages) {
-    if (line && Number.isSafeInteger(line.seq) && typeof line.text === 'string') bySeq.set(line.seq, line);
+    if (line && Number.isSafeInteger(line.seq) && typeof line.text === 'string') {
+      const prev = bySeq.get(line.seq);
+      bySeq.set(line.seq, live && !prev ? { ...line, receivedAt: now } : prev?.receivedAt ? { ...line, receivedAt: prev.receivedAt } : line);
+    }
   }
   store.set({ chat: { id: msg.matchId, messages: [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-CHAT_HISTORY_LIMIT) } });
 }
@@ -321,8 +325,8 @@ function wireNet() {
     const priority = Number.isFinite(msg.priority) ? msg.priority : 0;
     store.set((s) => ({ ticker: [...s.ticker.slice(-(TICKER_KEEP - 1)), { id: ++seq, text, at: Date.now(), type, playerId, round: s.match?.public?.round ?? null, priority }] }));
   });
-  net.on('m.chat', (msg) => receiveChat(msg, [msg.message]));
-  net.on('m.chat.history', (msg) => { if (Array.isArray(msg.messages)) receiveChat(msg, msg.messages); });
+  net.on('m.chat', (msg) => receiveChat(msg, [msg.message], true));
+  net.on('m.chat.history', (msg) => { if (Array.isArray(msg.messages)) receiveChat(msg, msg.messages, false); });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
   });

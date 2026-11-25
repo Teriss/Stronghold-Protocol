@@ -260,6 +260,21 @@ export function EmoteBubble({ id, class: cls, ttl = EMOTE_BUBBLE_MS, at }) {
 }
 
 /**
+ * Compact text chat bubble beside the sender's avatar: bounded width & height (2-line clamp with ellipsis),
+ * pop-in + fade-out matching EmoteBubble.
+ * @param {{ text: string, class?: string, ttl?: number, at?: number }} props
+ */
+export function ChatBubble({ text, class: cls, ttl = 4000, at }) {
+  useEffect(() => { ensureEmoteCss(); }, []);
+  const life = Math.max(300, Number(ttl) || 4000);
+  const [age] = useState(() => bubbleAge(at, Date.now(), life));
+  const style = [`--ebubble-ttl:${life}ms`, age && `--ebubble-age:${Math.round(age)}ms`].filter(Boolean).join(';');
+  return html`<div class=${cx('cbubble', cls)} style=${style} role="status">
+    <span class="cbubble__text" dir="auto">${text}</span>
+  </div>`;
+}
+
+/**
  * 交流 button + emote panel.
  * @param {{ onSend: (id:string)=>void, open: boolean, onToggle: (open:boolean)=>void, disabled?: boolean,
  *   cooldownMs?: number, chat?: any, chatOpen?: boolean, onTab?: ((tab: string) => void)|null,

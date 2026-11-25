@@ -976,6 +976,60 @@ button.ally-card:disabled .ally-card__bar { filter: grayscale(.5) brightness(.8)
   transition: border-color var(--t-fast), background-color var(--t-fast);
 }
 .code-chip:hover { border-color: var(--amber); background: rgba(246, 163, 41, .08); }
+.ally-card--browse .ally-card__bar--browse {
+  flex-wrap: wrap;
+  align-content: center;
+  row-gap: 1px;
+  height: auto;
+  min-height: max(.64rem, 32px, calc(38px * var(--sp-ui, 1)));
+  padding-top: 4px;
+  padding-bottom: 4px;
+  color: #eef0ef;
+  background: linear-gradient(180deg, #2b3235, #1b2022);
+  border-top: 1px solid rgba(255, 255, 255, .12);
+}
+.ally-card--browse .ally-card__bar--browse small { color: var(--text-lo); }
+.ally-card--browse:hover:not(:disabled), .ally-card--browse:focus-visible { border-color: rgba(159, 211, 255, .6); }
+
+/* room browser modal (screens/lobby.js RoomListModal) */
+.rlist { display: flex; flex-direction: column; gap: .12rem; max-height: min(60vh, 6.4rem); overflow-y: auto; overscroll-behavior: contain; padding-right: .04rem; }
+.rlist__empty { display: flex; align-items: center; justify-content: center; gap: .1rem; min-height: 1.8rem; margin: 0; font-size: calc(.17 * var(--t)); color: var(--text-lo); text-align: center; }
+.rlist__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .16rem;
+  padding: .14rem .18rem;
+  background: linear-gradient(180deg, #1d2122, #141718);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: .06rem;
+}
+.rlist__item.is-live { border-color: rgba(246, 163, 41, .35); }
+.rlist__main { display: flex; flex-direction: column; gap: .06rem; min-width: 0; flex: 1 1 auto; }
+.rlist__head { display: flex; flex-wrap: wrap; align-items: center; gap: .08rem .12rem; }
+.rlist__code { font-size: calc(.22 * var(--t)); font-weight: 900; letter-spacing: .16em; color: var(--text-hi); }
+.rlist__status {
+  padding: .02rem .08rem;
+  font-size: calc(.13 * var(--t));
+  font-weight: 700;
+  color: #08221b;
+  background: var(--mint-400, #5df0c6);
+  border-radius: 3px;
+}
+.rlist__status.is-live { color: #2a1404; background: var(--amber, #f6a329); }
+.rlist__diff { display: inline-flex; align-items: center; gap: .04rem; font-size: calc(.15 * var(--t)); font-weight: 700; color: var(--d-color); }
+.rlist__diff .icon, .rlist__diff svg { width: 1.1em; height: 1.1em; }
+.rlist__tag {
+  padding: .01rem .07rem;
+  font-size: calc(.13 * var(--t));
+  color: #cfe9ff;
+  background: rgba(159, 211, 255, .12);
+  border: 1px solid rgba(159, 211, 255, .3);
+  border-radius: 3px;
+}
+.rlist__tag--mod { color: #ffd08a; background: rgba(246, 163, 41, .12); border-color: rgba(246, 163, 41, .35); }
+.rlist__meta { display: flex; flex-wrap: wrap; align-items: center; gap: .06rem .18rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
+.rlist__actions { flex: none; display: flex; align-items: center; gap: .08rem; }
 
 /* ---- 选择模拟协议's cards when they do not fit their column (screens/lobby.js pickCardFit: data-fit), above 520 px tall --
    (§35.18's leftover there: at 大 / 特大, in a small window or a long language the list ran under 开始独立模拟 with 终极模拟
@@ -1167,6 +1221,7 @@ button.ally-card:disabled .ally-card__bar { filter: grayscale(.5) brightness(.8)
 .proto-foot { animation: tr-rise 400ms var(--tr-ease) 440ms backwards; }
 .ally-card--create { animation: tr-right 420ms var(--tr-ease) 240ms backwards; }
 .ally-card--join { animation: tr-right 420ms var(--tr-ease) 380ms backwards; }
+.ally-card--browse { animation: tr-right 420ms var(--tr-ease) 520ms backwards; }
 .ally-guide { animation: tr-rise 380ms var(--tr-ease) 450ms backwards; }
 /* the diamond at the bottom while it comes up */
 .proto__body::after, .ally__body::after { content: ''; position: absolute; left: 50%; bottom: .5rem; z-index: 9; width: .3rem; height: .3rem; pointer-events: none; opacity: 0;
@@ -1179,7 +1234,7 @@ button.ally-card:disabled .ally-card__bar { filter: grayscale(.5) brightness(.8)
   .hub-bg__ship, .hub-center, .hub-entry-wrap, .hub-radar__sweep, .proto__pic, .modal__box.proto, .modal__box.ally, .pcard.is-on .pcard__stamp,
   .mf-radar__sweep, .mf-radar__blip, .mf-blk.is-lit, .hub-bg__own, .lobby-hub .hub-bg, .lobby-hub > .topbar, .lobby-hub .hub-center, .lobby-hub .hub-side,
   .lobby-hub .hub-right, .hub-entries .hub-entry-wrap, .proto__bg, .proto-top, .proto-title, .proto-stage, .ally-stage, .proto-list .pcard, .proto-foot,
-  .ally-card--create, .ally-card--join, .ally-guide, .pcard.is-on .pcard__ring path, .ps, .ps-fig, .ps-spike, .ps-call, .ps-beacon, .ps-scan { animation: none; }
+  .ally-card--create, .ally-card--join, .ally-card--browse, .ally-guide, .pcard.is-on .pcard__ring path, .ps, .ps-fig, .ps-spike, .ps-call, .ps-beacon, .ps-scan { animation: none; }
   .ps-cable__pulse { display: none; }
   .pcard.is-on .pcard__ring path { stroke-dashoffset: 0; }
   .proto__body::after, .ally__body::after { display: none; }

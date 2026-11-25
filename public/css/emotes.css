@@ -163,9 +163,54 @@
 .ebubble.has-sprite { background: var(--ebubble-bg) center / 100% 100% no-repeat; }
 .ebubble.has-sprite::before, .ebubble.has-sprite::after { content: none; }
 /* in the team panel the bubble is anchored beside the row (placement: screens/game.css .team__bubble) */
-.ebubble.team__bubble { position: absolute; }
+.ebubble.team__bubble, .cbubble.team__bubble { position: absolute; }
 .ebubble__icon { position: absolute; left: .26rem; top: .12rem; width: .68rem; height: .70rem; display: grid; place-items: center; }
 .ebubble .eart { width: 100%; height: 100%; }
+
+/* ---- compact text chat bubble beside the sender's avatar (bounded width & 2-line clamp) -------------------- */
+.cbubble {
+  --ebubble-ttl: 4000ms;
+  --ebubble-age: 0ms;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: .72rem;
+  max-width: min(3.2rem, 40vw);
+  margin-left: .12rem;
+  padding: .08rem .14rem;
+  border-radius: .08rem;
+  background: rgba(20, 24, 24, .92);
+  border: 1px solid rgba(93, 240, 198, .35);
+  box-shadow: 0 .03rem .12rem rgba(0, 0, 0, .55);
+  color: var(--text-hi, #eef0ef);
+  font-size: max(calc(.15 * var(--t)), 12px);
+  line-height: 1.35;
+  transform-origin: -.12rem 50%;
+  animation: emo-bubble-pop 240ms var(--ease-out) calc(0ms - var(--ebubble-age)) both,
+    emo-bubble-out 300ms var(--ease-in-out) calc(var(--ebubble-ttl) - 300ms - var(--ebubble-age)) forwards;
+  pointer-events: none;
+  z-index: 3;
+}
+.cbubble::before {
+  content: '';
+  position: absolute;
+  left: -.11rem;
+  top: calc(50% - .07rem);
+  width: .12rem;
+  height: .14rem;
+  background: rgba(20, 24, 24, .92);
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+.cbubble__text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 
 @keyframes emo-panel-in { from { opacity: 0; transform: translateY(.06rem) scale(.96); } }
 @keyframes emo-page-in { from { opacity: 0; } }
@@ -180,5 +225,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ewheel__panel, .ewheel__page, .ewheel__page.is-from-right, .ewheel__page.is-from-left { animation: none; }
-  .ebubble { animation: emo-bubble-out 1ms linear calc(var(--ebubble-ttl) - 1ms - var(--ebubble-age)) forwards; }
+  .ebubble, .cbubble { animation: emo-bubble-out 1ms linear calc(var(--ebubble-ttl) - 1ms - var(--ebubble-age)) forwards; }
 }

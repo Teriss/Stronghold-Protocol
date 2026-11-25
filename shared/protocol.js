@@ -74,6 +74,10 @@ const isUnspawned = (u) => isPlain(u) && isId(u.enemyKey) && nullable(isId)(u.so
 // 规程 leader ranking (b.progress `ops`): exactly these five keys. A 盟约 server accepts the field and stores nothing.
 const isLeaderOp = (row) => isPlain(row) && Object.keys(row).length === 5
   && isUid(row.uid) && isId(row.pid) && isId(row.chess) && isInt(row.tier, 0, 10) && isNum(row.dmg, 0, BIG);
+// Live per-unit dmg/heal reported at ~1 Hz in b.progress `units` for co-op 作战统计.
+const isProgressUnit = (u) => isPlain(u) && nullable(isUid)(u.uid) && nullable(isId)(u.defId)
+  && optional((v) => v === null || isStr(v, 64))(u.name)
+  && optional((v) => isStr(v, 16))(u.kind) && isStat(u.dmg) && isStat(u.heal);
 
 /**
  * Structural check of a client BattleResult (DESIGN §5.1 / §14 `b.result`): types, ranges and size limits only —
@@ -524,6 +528,7 @@ export const C2S = {
   // default create stays the message it was.
   // modeId: an official mode of a laddered version's room mode (规程's solo: 极速模拟 / 规程等级 n); ignored elsewhere
   'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), test: (v) => v === true, version: isVersionId, soloUnlimited: isBool, prepUnlimited: isBool, endless: isBool, modeId: isId, capacity: (v) => COOP_ROOM_CAPACITIES.includes(v), $optional: ['test', 'difficulty', 'version', 'soloUnlimited', 'prepUnlimited', 'endless', 'modeId', 'capacity'] },
+  'room.list': {},
   'room.join': { $optional: ['testAck'], testAck: (v) => v === true, code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
   'p2p.enable': { enabled: isBool },
   'p2p.signal': { epoch: isId, to: isId, description: isPeerDescription, candidate: isPeerCandidate, $optional: ['description', 'candidate'] },
@@ -537,6 +542,10 @@ export const C2S = {
   // 「不限时」 (DESIGN §35.23.10; host, before the match, a solo room of a version whose solo is timed): the match's
   // preparation and 机变 stay untimed (Match opts.soloUnlimited). Off by default; room.state omits the key unless it is on.
   'room.setSoloUnlimited': { on: isBool },
+  // Co-op room rules toggled by the host before the match: unlimited preparation time, endless mode, and room capacity.
+  'room.setPrepUnlimited': { on: isBool },
+  'room.setEndless': { on: isBool },
+  'room.setCapacity': { capacity: (v) => COOP_ROOM_CAPACITIES.includes(v) },
 
   // Remake-only spectator handover: host opt-in before play, default off (§35.100).
   'room.setAiTakeover': { on: isBool },
@@ -669,7 +678,8 @@ export const C2S = {
     left: (v) => isMap(v, RESULT_LIMITS.players, isId, (x) => isInt(x, 0, 1e5)),
     leaksBy: (v) => isMap(v, RESULT_LIMITS.players, isId, (x) => isNum(x, 0, 1e6)),
     ops: (v) => isList(v, LEADER_OPS_MAX, isLeaderOp),
-    $optional: ['resolved', 'leaks', 'bossDmg', 'by', 'done', 'left', 'leaksBy', 'ops'],
+    units: (v) => isMap(v, RESULT_LIMITS.players, isId, (arr) => isList(arr, 48, isProgressUnit)),
+    $optional: ['resolved', 'leaks', 'bossDmg', 'by', 'done', 'left', 'leaksBy', 'ops', 'units'],
   },
   // `cs` (DESIGN §32, optional): the content hash the reporting browser ran the battle on — its spec's `cs`. In a room
   // with gameplay plugins (P1c, DESIGN §32.6) the match refuses a result without it or with another one (and runs the
@@ -697,12 +707,14 @@ export const C2S = {
 export const S2C = [
   'welcome', 'ok', 'error', 'pong',
   'p2p.config', 'p2p.signal', 'p2p.frame',
-  'room.state', 'room.closed',
+  'room.state', 'room.closed', 'room.list',
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.chat', 'm.chat.history', 'm.result',
   // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',
+  // m.combatStats { battleId, round, kind, seconds, players } — post-field per-player unit dmg/heal for team 作战统计
+  'm.combatStats',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
   // speed, watch?, surrenders? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
   // b.end { battleId, fieldId, reason } · b.surrender { battleId, fieldId, playerId, at } — a 联防 helper gave its half

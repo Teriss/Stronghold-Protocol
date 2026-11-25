@@ -571,6 +571,7 @@ export class MatchBoss {
     for (const f of this.fields) {
       const res = resultOf(f);
       this._collectSimErrors(f, res);
+      this._broadcastCombatStats(f, res);
       f.live = false;
       for (const pid of f.players) {
         const pp = res.perPlayer && res.perPlayer[pid];

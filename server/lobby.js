@@ -839,12 +839,16 @@ export class Lobby {
   handleMessage(session, msg, ctx = null) {
     switch (msg.t) {
       case 'room.create': return this.create(session, msg);
+      case 'room.list': return this.listRooms(session);
       case 'room.join': return this.join(session, msg);
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
       case 'room.setDifficulty': return this.setDifficulty(session, msg);
       case 'room.setAiPicksLast': return this.setAiPicksLast(session, msg);
       case 'room.setSoloUnlimited': return this.setSoloUnlimited(session, msg);
+      case 'room.setPrepUnlimited': return this.setPrepUnlimited(session, msg);
+      case 'room.setEndless': return this.setEndless(session, msg);
+      case 'room.setCapacity': return this.setCapacity(session, msg);
       case 'room.setAiTakeover': return this.setAiTakeover(session, msg);
       case 'room.aiRequest':
       case 'room.aiVote': return aiTakeover(this, session, msg);
@@ -1238,6 +1242,128 @@ export class Lobby {
       room.soloUnlimited = next;
       this.broadcastState(room);
     }
+    return OK;
+  }
+
+  /**
+   * Co-op room option 「休整不限时」: host-only, before the match, co-op rooms only.
+   * Toggling un-readies other human seats so everyone sees the rule change before starting.
+   */
+  setPrepUnlimited(session, { on }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode !== 'coop') return fail(ERR.BAD_TARGET, 'unlimited preparation is a co-op room option');
+    this.dropReplay(room, session.playerId);
+    const next = on === true;
+    if (room.prepUnlimited !== next) {
+      room.prepUnlimited = next;
+      for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
+      this.broadcastState(room);
+    }
+    return OK;
+  }
+
+  /**
+   * Co-op room option 「无尽模式」: host-only, before the match, co-op rooms only.
+   * Toggling un-readies other human seats so everyone sees the rule change before starting.
+   */
+  setEndless(session, { on }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode !== 'coop') return fail(ERR.BAD_TARGET, 'endless is a co-op room option');
+    this.dropReplay(room, session.playerId);
+    const next = on === true;
+    if (room.endless !== next) {
+      room.endless = next;
+      for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
+      this.broadcastState(room);
+    }
+    return OK;
+  }
+
+  /**
+   * Co-op room capacity (4 / 6 / 8): host-only, before the match, co-op rooms only.
+   * Refuses shrinking below the current occupied seat count; compacts high seats into free lower slots when shrinking.
+   */
+  setCapacity(session, { capacity }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode !== 'coop') return fail(ERR.BAD_TARGET, 'room capacity is a co-op room option');
+    if (!COOP_ROOM_CAPACITIES.includes(capacity)) return fail(ERR.BAD_MSG, 'bad capacity');
+    if (room.capacity === capacity) return OK;
+    const occupied = room.seats.filter(Boolean);
+    if (occupied.length > capacity) return fail(ERR.BAD_TARGET, 'too many occupied seats for this capacity');
+    this.dropReplay(room, session.playerId);
+    if (capacity > room.capacity) {
+      while (room.seats.length < capacity) room.seats.push(null);
+    } else {
+      for (let i = capacity; i < room.seats.length; i++) {
+        const s = room.seats[i];
+        if (!s) continue;
+        const dst = room.seats.indexOf(null);
+        room.seats[dst] = s;
+        s.seat = dst;
+        room.seats[i] = null;
+      }
+      room.seats.length = capacity;
+    }
+    room.capacity = capacity;
+    for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
+    this.broadcastState(room);
+    return OK;
+  }
+
+  /**
+   * List active co-op rooms (excluding disposed rooms and rooms with no active human players).
+   * Pushes `room.list` to the requesting session and answers OK.
+   */
+  listRooms(session) {
+    const rooms = [];
+    for (const r of this.rooms.values()) {
+      if (r.disposed || r.mode !== 'coop') continue;
+      const humans = r.activeHumans();
+      if (humans.length === 0) continue;
+      let bots = 0;
+      let freeSeats = 0;
+      for (const s of r.seats) {
+        if (!s) freeSeats++;
+        else if (s.isBot) bots++;
+      }
+      const host = (r.hostId ? r.seatOf(r.hostId) : null) || humans[0];
+      const round = r.match && Number.isInteger(r.match.round) && r.match.round > 0 ? r.match.round : null;
+      rooms.push({
+        code: r.code,
+        hostName: host?.name || '',
+        difficulty: r.difficulty,
+        capacity: r.capacity,
+        humans: humans.length,
+        bots,
+        occupied: r.capacity - freeSeats,
+        freeSeats,
+        spectators: r.spectators.length,
+        maxSpectators: MAX_SPECTATORS,
+        inMatch: !!r.match,
+        ...(round != null ? { round } : {}),
+        ...(r.version !== DEFAULT_VERSION ? { version: r.version } : {}),
+        ...(r.test ? { test: true } : {}),
+        ...(r.prepUnlimited === true ? { prepUnlimited: true } : {}),
+        ...(r.endless ? { endless: true } : {}),
+        ...(r.modded ? { modded: true } : {}),
+        createdAt: r.createdAt,
+      });
+    }
+    const rank = (x) => (x.inMatch ? 2 : x.freeSeats > 0 ? 0 : 1);
+    rooms.sort((a, b) => rank(a) - rank(b) || b.createdAt - a.createdAt);
+    sendSession(session, { t: 'room.list', rooms: rooms.slice(0, 100) });
     return OK;
   }
 

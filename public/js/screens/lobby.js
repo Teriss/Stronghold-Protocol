@@ -37,7 +37,7 @@
 import { TestMark } from '../ui/testConsole.js';
 import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, COOP_ROOM_CAPACITIES, DEFAULT_COOP_CAPACITY, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
 import { html, confirmDialog, Button, Icon, MicroLabel, Modal, PingPill, Spinner, DifficultyIcon, TextField } from '../ui/components.js';
 import { Sprite, Img } from '../ui/gameComponents.js';
 import { uiUrl, medalIconUrl } from '../ui/assetUrls.js';
@@ -689,11 +689,8 @@ export function ProtocolSelect({ roomMode, difficulty, onDifficulty, onClose, on
  * `placeholderShort`, by the field's width: English and Japanese at 特大 on every desktop, the default Chinese at 特大
  * in a 1024 px window — it ended in an ellipsis there).
  */
-export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, onCode, codeOk, online, busy, onJoin, onSpectate, recent, marks, focusKey,
+export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, onCode, codeOk, online, busy, onJoin, onSpectate, onBrowse = () => {}, recent, marks, focusKey,
   testMode = false, asTest = false, onTest = () => {}, short = false }) {
-  const [capacity, setCapacity] = useState(DEFAULT_COOP_CAPACITY);
-  const [prepUnlimited, setPrepUnlimited] = useState(false);
-  const [endless, setEndless] = useState(false);
   const diffName = DIFFICULTY_NAMES[difficulty] ? t(DIFFICULTY_NAMES[difficulty]) : '';
   return html`<${Modal} open=${true} onClose=${onClose} class="ally" veilClass="proto-veil">
     <div class="ally__body">
@@ -711,27 +708,8 @@ export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, 
           <button type="button" class="ally-guide" onClick=${() => openGuide(0)}><span class="ally-guide__icon"><${Icon} name="book" /></span>${t('玩法说明')}</button>
         </section>
         <section class="ally-side">
-          <div class="ally-capacity" role="group" aria-label=${t('同盟人数上限')}>
-            <span>${t('同盟人数上限')}</span>
-            ${COOP_ROOM_CAPACITIES.map((value) => html`<button key=${value} type="button" aria-pressed=${capacity === value}
-              disabled=${busy === 'create'} onClick=${() => setCapacity(value)}>${value}</button>`)}
-          </div>
-          <div class="ally-rules">
-          <button type="button" class="ally-prep" role="switch" aria-checked=${String(prepUnlimited)}
-              data-testid="alliance-prep-unlimited" title=${t('每轮休整须全员就绪后才开始作战')}
-              disabled=${busy === 'create'} onClick=${() => setPrepUnlimited(!prepUnlimited)}>
-            <span class="ally-prep__check" aria-hidden="true">${prepUnlimited ? html`<${Icon} name="check" />` : null}</span>
-            ${t('休整不限时')}
-          </button>
-          <button type="button" class="ally-prep" role="switch" aria-checked=${String(endless)}
-              data-testid="alliance-endless" title=${t('通关后投票续轮，保留养成并更换地图')}
-              disabled=${busy === 'create'} onClick=${() => setEndless(!endless)}>
-            <span class="ally-prep__check" aria-hidden="true">${endless ? html`<${Icon} name="check" />` : null}</span>
-            ${t('无尽模式')}
-          </button>
-          </div>
           <button type="button" class="ally-card ally-card--create ally-create" data-testid="alliance-create" data-difficulty=${difficulty}
-              disabled=${!online || busy === 'create'} aria-busy=${busy === 'create' ? 'true' : 'false'} onClick=${() => onCreate(capacity, { prepUnlimited, endless })}>
+              disabled=${!online || busy === 'create'} aria-busy=${busy === 'create' ? 'true' : 'false'} onClick=${() => onCreate()}>
             <span class="ally-card__art"><${CreateArt} /></span>
             <span class="ally-card__bar"><span class="ally-card__icon">${busy === 'create' ? html`<${Spinner} size="sm" />` : html`<${Icon} name="plus" />`}</span><span class="ally-card__name">${t('创建同盟')}</span>
               <small>${online ? t('难度：{name}（可在同盟内更改）', { name: diffName }) : t('正在连接服务器…')}</small></span>
@@ -761,9 +739,93 @@ export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, 
               <span class="ally-card__icon"><${Icon} name="users" /></span>${t('加入同盟')}${busy === 'join' ? html`<${Spinner} size="sm" />` : null}
             </button>
           </div>
+          <button type="button" class="ally-card ally-card--browse" data-testid="alliance-browse"
+              disabled=${!online || !!busy} onClick=${() => onBrowse()}>
+            <span class="ally-card__bar ally-card__bar--browse">
+              <span class="ally-card__icon"><${Icon} name="search" /></span>
+              <span class="ally-card__name">${t('查看所有房间')}</span>
+              <small>${t('浏览当前同盟房间，选择加入或观战')}</small>
+            </span>
+          </button>
         </section>
       </div>
     </div>
+  <//>`;
+}
+
+/**
+ * Secondary dialog listing all active co-op rooms on the server, showing each room's status
+ * (waiting / in-match, seats, spectators, difficulty, rules) with direct Join and Spectate actions.
+ */
+export function RoomListModal({ online, busy, onJoin, onSpectate, onClose }) {
+  const [rooms, setRooms] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const refresh = async () => {
+    if (!online) return;
+    setLoading(true);
+    try { await net.request('room.list', {}); } catch (err) { toastError(err); } finally {
+      if (alive.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => net.on('room.list', (msg) => {
+    if (alive.current) setRooms(Array.isArray(msg?.rooms) ? msg.rooms : []);
+  }), []);
+
+  useEffect(() => {
+    if (!online) return undefined;
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [online]);
+
+  return html`<${Modal} open=${true} onClose=${onClose} class="room-list" micro="ALLIANCE ROOMS" title=${t('当前所有房间')} width="min(9.6rem, 94vw)"
+      actions=${html`<${Button} variant="secondary" icon="refresh" loading=${loading} disabled=${!online || loading} onClick=${refresh}>${t('刷新')}<//>
+        <${Button} variant="ghost" onClick=${onClose}>${t('关闭')}<//>`}>
+    ${!online ? html`<p class="rlist__empty"><${Spinner} size="sm" /> ${t('正在连接服务器…')}</p>`
+      : rooms === null ? html`<p class="rlist__empty"><${Spinner} size="sm" /> ${t('正在获取房间列表…')}</p>`
+      : rooms.length === 0 ? html`<p class="rlist__empty" data-testid="room-list-empty">${t('当前没有活跃的同盟房间')}</p>`
+      : html`<div class="rlist" data-testid="room-list">
+        ${rooms.map((r) => {
+          const canJoin = !r.inMatch && r.freeSeats > 0 && online && !busy;
+          const canSpec = r.spectators < r.maxSpectators && online && !busy;
+          const joinWhy = r.inMatch ? t('模拟进行中') : r.freeSeats <= 0 ? t('席位已满') : '';
+          const specWhy = r.spectators >= r.maxSpectators ? t('观战席已满') : '';
+          const diffName = DIFFICULTY_NAMES[r.difficulty] ? t(DIFFICULTY_NAMES[r.difficulty]) : r.difficulty;
+          const diffColor = DIFFICULTY_COLORS[r.difficulty] || 'var(--amber)';
+          const statusText = r.inMatch
+            ? (r.round ? t('模拟中 · 第 {n} 回合', { n: r.round }) : t('模拟中'))
+            : t('等待中');
+          return html`<article key=${r.code} class=${`rlist__item${r.inMatch ? ' is-live' : ''}`} data-room-code=${r.code}>
+            <div class="rlist__main">
+              <div class="rlist__head">
+                <span class="rlist__code num">${r.code}</span>
+                <span class=${`rlist__status${r.inMatch ? ' is-live' : ''}`}>${statusText}</span>
+                <span class="rlist__diff" style=${`--d-color:${diffColor}`}><${DifficultyIcon} difficulty=${r.difficulty} />${diffName}</span>
+                ${r.version ? html`<span class="rlist__tag">${versionLabel(r.version)}</span>` : null}
+                ${r.test ? html`<${TestMark} />` : null}
+                ${r.modded ? html`<span class="rlist__tag rlist__tag--mod">${t('插件')}</span>` : null}
+                ${r.prepUnlimited ? html`<span class="rlist__tag">${t('休整不限时')}</span>` : null}
+                ${r.endless ? html`<span class="rlist__tag">${t('无尽模式')}</span>` : null}
+              </div>
+              <div class="rlist__meta">
+                <span>${t('创建者：{name}', { name: r.hostName || t('博士') })}</span>
+                <span class="num">${t('席位 {occupied}/{capacity}', { occupied: r.occupied, capacity: r.capacity })}${r.bots > 0 ? t('（含 {bots} AI）', { bots: r.bots }) : ''}</span>
+                <span class="num">${t('观战 {n}/{max}', { n: r.spectators, max: r.maxSpectators })}</span>
+              </div>
+            </div>
+            <div class="rlist__actions">
+              <${Button} size="sm" icon="users" data-testid="room-list-join" disabled=${!canJoin} loading=${busy === 'join'}
+                title=${joinWhy || t('加入同盟')} onClick=${() => onJoin(r.code)}>${t('加入')}<//>
+              <${Button} variant="secondary" size="sm" icon="eye" data-testid="room-list-spectate" disabled=${!canSpec} loading=${busy === 'spectate'}
+                title=${specWhy || t('观战')} onClick=${() => onSpectate(r.code)}>${t('观战')}<//>
+            </div>
+          </article>`;
+        })}
+      </div>`}
   <//>`;
 }
 
@@ -780,8 +842,9 @@ export function LobbyScreen() {
   const [soloFree, setSoloFree] = useState(() => loadPref('lobby.soloUnlimited', false) === true);
   // a laddered version's solo mode (规程: 极速模拟 / 规程等级 n), remembered; the version's data decides what is shown
   const [ladderMode, setLadderMode] = useState(() => { const v = loadPref('lobby.ladderMode', null); return typeof v === 'string' ? v : null; });
-  // the open dialogs: 选择同盟方式 (同盟模拟 / 密钥加入) and 选择模拟协议 (独立模拟)
+  // the open dialogs: 选择同盟方式 (同盟模拟 / 密钥加入), 当前所有房间 and 选择模拟协议 (独立模拟)
   const [allyOpen, setAllyOpen] = useState(false);
+  const [roomListOpen, setRoomListOpen] = useState(false);
   const [soloOpen, setSoloOpen] = useState(false);
   const [code, setCode] = useState('');
   const [asTest, setAsTest] = useState(false);
@@ -833,11 +896,8 @@ export function LobbyScreen() {
   };
   // 独立模拟: at the difficulty picked on 选择模拟协议; 创建同盟: at the remembered one, changed in the room by the host
   // (`version`: the lobby's, only when welcome.versions is present — protocol §4; omitted when the server offers 第二期下半 alone)
-  const create = (mode, capacity = DEFAULT_COOP_CAPACITY, { prepUnlimited = false, endless = false } = {}) => run('create', () => net.request('room.create', {
+  const create = (mode) => run('create', () => net.request('room.create', {
     mode, difficulty: mode === 'solo' ? shownSolo : shownCoop, ...(testMode && asTest ? { test: true } : {}), ...(versions ? { version } : {}),
-    ...(mode === 'coop' ? { capacity } : {}),
-    ...(mode === 'coop' && prepUnlimited ? { prepUnlimited: true } : {}),
-    ...(mode === 'coop' && endless ? { endless: true } : {}),
     ...(mode === 'solo' && soloFree && soloTimed === true ? { soloUnlimited: true } : {}),
     ...(mode === 'solo' && shownMode ? { modeId: shownMode } : {}),
   }));
@@ -920,10 +980,11 @@ export function LobbyScreen() {
       </section>
     </main>
 
-    ${allyOpen ? html`<${AllianceSelect} onClose=${() => setAllyOpen(false)} onCreate=${(capacity, rules) => create('coop', capacity, rules)} difficulty=${shownCoop}
+    ${allyOpen ? html`<${AllianceSelect} onClose=${() => setAllyOpen(false)} onCreate=${() => create('coop')} difficulty=${shownCoop}
       code=${code} onCode=${(v) => setCode(normalizeCode(v))} codeOk=${codeOk} online=${online} busy=${busy}
-      onJoin=${join} onSpectate=${spectate} recent=${recent} marks=${marks} focusKey=${!coarse}
+      onJoin=${join} onSpectate=${spectate} onBrowse=${() => setRoomListOpen(true)} recent=${recent} marks=${marks} focusKey=${!coarse}
       testMode=${testMode} asTest=${asTest} onTest=${setAsTest} short=${shortScreen} />` : null}
+    ${roomListOpen ? html`<${RoomListModal} online=${online} busy=${busy} onJoin=${join} onSpectate=${spectate} onClose=${() => setRoomListOpen(false)} />` : null}
     ${soloOpen ? html`<${ProtocolSelect} roomMode="solo" difficulty=${shownSolo} onDifficulty=${pickDifficulty}
       onClose=${() => setSoloOpen(false)} onCreate=${() => create('solo')} busy=${busy} online=${online}
       testMode=${testMode} asTest=${asTest} onTest=${setAsTest} difficulties=${solo} loading=${versionLoading} failed=${versionFailed}

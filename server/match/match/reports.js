@@ -32,6 +32,23 @@ export class MatchReports {
     // report drops never-spawned enemies from `total`, and a takeover may report a different number)
     if (Number.isInteger(msg.resolved)) p.resolved = Math.max(0, Math.min(1e5, msg.resolved));
     f.lastProgressAt = this.sched.now();
+    if (!this.isSolo && msg.units && typeof msg.units === 'object') {
+      const players = {};
+      for (const pid of f.players) {
+        if (Array.isArray(msg.units[pid])) players[pid] = msg.units[pid];
+      }
+      if (Object.keys(players).length) {
+        this.broadcast({
+          t: 'm.combatStats',
+          battleId: f.battleId || `${this.round}:${f.fieldId}`,
+          round: this.round,
+          kind: f.kind,
+          seconds: Math.round(p.gt * 100) / 100,
+          players,
+          live: true,
+        });
+      }
+    }
     if (f.kind === 'boss' || f.kind === 'hidden') {
       this._creditBoss(f, msg.bossDmg, msg.by, msg.ops);
       this._creditLp(f, msg.leaks, true);

@@ -297,6 +297,35 @@ export function timelineSample(b) {
  * battle's own game time reaches `at` (a 联防 helper's surrender, recorded at the field clock it happened on — a
  * takeover / a cut-short replay reproduces it exactly where it was; Match._surrenderUnite).
  */
+function metricsSample(b) {
+  const players = {};
+  for (const ps of b.players || []) {
+    players[ps.playerId] = (ps.units || [])
+      .filter((u) => u && ((Number(u.stats?.dmg) || 0) > 0 || (Number(u.stats?.heal) || 0) > 0))
+      .map((u) => ({
+        uid: u.uid ?? null,
+        defId: u.defId || null,
+        name: u.name || null,
+        kind: u.kind || 'op',
+        dmg: Math.round(Number(u.stats?.dmg) || 0),
+        heal: Math.round(Number(u.stats?.heal) || 0),
+      }));
+  }
+  return { gt: Math.round((Number(b.time) || 0) * 100) / 100, players };
+}
+
+/** Return the latest metrics sample at or before `gt`, or null. */
+export function metricsAt(timeline, gt) {
+  if (!Array.isArray(timeline) || !timeline.length) return null;
+  let lo = 0, hi = timeline.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (timeline[mid].gt <= gt) lo = mid;
+    else hi = mid - 1;
+  }
+  return timeline[lo];
+}
+
 export class HeadlessJob {
   constructor(battle, { onError = null, players = [], endReason = 'timeout', events = [] } = {}) {
     this.battle = battle;
@@ -306,6 +335,7 @@ export class HeadlessJob {
     this.events = Array.isArray(events) ? events.slice() : [];
     this._next = 0;
     this.timeline = [timelineSample(battle)];
+    this.metricsTimeline = [metricsSample(battle)];
     this.every = Math.max(1, Math.round(TIMELINE_EVERY / TICK));
     this.cap = Math.ceil(HARD_CAP_SECONDS / TICK);
     this.n = 0;
@@ -333,7 +363,10 @@ export class HeadlessJob {
         this.n++;
         k++;
         if (control) control.note(1);
-        if (this.n % this.every === 0) this.timeline.push(timelineSample(b));
+        if (this.n % this.every === 0) {
+          this.timeline.push(timelineSample(b));
+          this.metricsTimeline.push(metricsSample(b));
+        }
         if ((k & 15) === 0 && !b.finished && (replaying ? control.stop() : timed && now() - t0 >= budgetMs)) return false;
       }
       if (!b.finished) b.forceEnd(this.endReason);
@@ -357,8 +390,9 @@ export class HeadlessJob {
       result = { time: Number(b.time) || 0, reason: 'forced', perPlayer, killed: 0, total: 0, errors: 1, synthetic: true };
     }
     this.timeline.push(timelineSample(b));
+    this.metricsTimeline.push(metricsSample(b));
     this.done = true;
-    this._out = { battle: b, result, timeline: this.timeline, crashed: this.crashed };
+    this._out = { battle: b, result, timeline: this.timeline, metricsTimeline: this.metricsTimeline, crashed: this.crashed };
   }
 
   output() { return this._out; }

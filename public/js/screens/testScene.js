@@ -8,7 +8,7 @@ import { t } from '../../../shared/i18n.js';
 import { data, useData } from '../data.js';
 import { store, useStore } from '../store.js';
 import { installContent } from '../content.js';
-import { audio } from '../audio.js';
+import { audio, installAudio } from '../audio.js';
 import { storedLobbyVersion } from '../versions.js';
 import { loadBrowserSim, SIM_DATA_FILES } from '../battle/simLoader.js';
 import { makeRunner } from '../battle/localPlayback.js';
@@ -490,7 +490,7 @@ function TestScene() {
     };
     window.addEventListener('resize', onResize);
     window.addEventListener('pagehide', dispose);
-    mountFieldView(host, { signal: controller.signal, hud: TEST_SCENE_HUD, padding: TEST_SCENE_PADDING }).then(field => {
+    mountFieldView(host, { signal: controller.signal, hud: TEST_SCENE_HUD, padding: TEST_SCENE_PADDING, audio }).then(field => {
       if (controller.signal.aborted) { field.destroy(); return; }
       mounted = field;
       setViewState({ view: field, kind: field.kind });
@@ -994,6 +994,8 @@ function TestScene() {
   // Run local fixed-tick battle on the same live field renderer.
   useEffect(() => {
     if (!view || !content || !run) {
+      audio.stopFieldSounds();
+      audio.playBgm('prep');
       battleRef.current = null;
       snapUnitsRef.current = new Map();
       setBattleMeta(null);
@@ -1006,6 +1008,7 @@ function TestScene() {
       cancelAnimationFrame(raf);
       runner?.pause();
       battleRef.current = null;
+      audio.stopFieldSounds();
       view.raw.setLocalFeed?.({ on: false });
     };
     window.addEventListener('pagehide', stopLoop);
@@ -1024,6 +1027,9 @@ function TestScene() {
       }
       const meta = battle.fieldMeta();
       setBattleMeta(meta);
+      audio.setFieldUnits(meta.units);
+      audio.sfx(isBossRun ? 'bossRoundSingle' : 'battleStart');
+      audio.playBgm(isBossRun ? 'boss' : 'combat');
       view.enterBattle(meta);
       view.setCamera(isBossRun ? 'boss' : 'normal', isBossRun ? { rect: run.rect, side: runSide, half: true, instant: true } : { rect: run.rect, instant: true });
       view.raw.setLocalFeed?.({ on: true, speed: 1 });
@@ -1033,6 +1039,7 @@ function TestScene() {
           for (const tup of snap.units) if (Array.isArray(tup)) mp.set(tup[0], tup);
           snapUnitsRef.current = mp;
         }
+        if (Array.isArray(events) && events.length) audio.handleBattleEvents(events);
         view.pushEvents({ t: 'b.ev', fieldId: snap.fieldId, gt: snap.t, ev: events });
         view.pushSnapshot({ ...snap, t: 'b.snap', gt: snap.t });
       } });
@@ -1347,6 +1354,8 @@ function TestScene() {
 
 store.set({ me: { ...store.get().me, playerId: 'test-scene' } });
 installContent({ toast });
+installAudio({ getManifest: () => data.get('assets'), settings: settingsStore.get() });
+data.load('assets').catch(() => {});
 installSettingsViews({ versionOf: () => activeSceneVersion });
 fetch('/healthz', { cache: 'no-cache' })
   .then(r => (r.ok ? r.json() : null))

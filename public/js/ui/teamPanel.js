@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
 import { html, Icon, Tooltip } from './components.js';
 import { PlayerAvatar, LpTower, GIcon, LocalSprite, BondGlyph, UnitThumb, Img, RichTip, RichText } from './gameComponents.js';
-import { EmoteBubble } from './emotes.js';
+import { EmoteBubble, ChatBubble } from './emotes.js';
 import { STATUS_META, sortedPlayers, teamFrameIds, bondTier, diyRecordFor, cardStandIn, standInForText } from './gameLogic.js';
 import { bondEffectRecord } from './bondEffect.js';
 import { bandIconUrl } from './assetUrls.js';
@@ -361,7 +361,9 @@ export function TeamPanel({ pub, priv = null, gd = null, myId, watching, bubbles
               ${backCollapsed ? html`<button type="button" class="btn btn--secondary btn--sm team__back"
                 onClick=${() => observe.onBack()}><span class="btn__label">${t('返回战场')}</span></button>` : null}
             </div>`}
-            ${bubble ? html`<${EmoteBubble} key=${bubble.seq} id=${bubble.id} class="team__bubble" />` : null}
+            ${bubble ? (bubble.kind === 'chat'
+              ? html`<${ChatBubble} key=${`c:${bubble.seq}`} text=${bubble.text} at=${bubble.at} ttl=${bubble.ttl} class="team__bubble" />`
+              : html`<${EmoteBubble} key=${`e:${bubble.seq}`} id=${bubble.id} at=${bubble.at} class="team__bubble" />`) : null}
           </div>`;
         })}
       </div>

@@ -143,7 +143,6 @@ import {
   mergeTarget, mergeProgress, modeOffBonds, readyFundsPrompt, readyCommandPrompt, readyPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownDiyPick, ownStandIn, roundStartReplay, heldDraftPub,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
-import { LoadoutButton } from './loadout.js';
 import { BriefingScreen } from './briefing.js';
 import { BandDraftScreen } from './bandDraft.js';
 import { DiyCheckScreen } from './diyCheck.js';
@@ -243,7 +242,7 @@ export function GameScreen() {
   const matchEnded = ended || hasResult || mode === 'result';
   const showResult = hasResult || mode === 'result';
   const showHud = !showResult && !['briefing', 'diy', 'draft'].includes(mode) && !held;
-  const communication = chatId ? html`<div class=${cx('match-communication', !showHud && 'match-communication--floating')} key=${chatId}>
+  const communication = showHud && chatId ? html`<div class="match-communication" key=${chatId}>
     <${MatchCommunication} ended=${matchEnded} />
   </div>` : null;
   let body;
@@ -254,7 +253,6 @@ export function GameScreen() {
   else body = html`<${BandDraftScreen} held=${held} />`;
   return html`${body}
     ${pub.phase === PHASE.ENDLESS_VOTE && pub.endless?.vote && !ended && !hasResult ? html`<${EndlessVote} key=${pub.endless.cycle} pub=${pub} />` : null}
-    ${showHud ? null : communication}
     ${voteRoom && (hasResult || mode === 'result') ? html`<${VersionVote} room=${voteRoom} class="vervote--float" />` : null}
     ${(away || autoplay) && !hasResult && mode !== 'result' && !ended ? html`<${AwayOverlay} />` : null}
     ${ended && !hasResult && mode !== 'result' ? html`<${MatchEnded} />` : null}
@@ -1198,9 +1196,22 @@ function MatchScreen({ communication = null } = {}) {
     prevActive.current = activeBonds;
   }, [activeBonds]);
 
-  // emote bubbles (and a sound for teammates' emotes)
+  // emote + chat bubbles (and a sound for teammates' emotes)
+  const chatMessages = useStore((s) => s.chat?.messages);
   const bubbleMs = (gd.config?.timers?.chatBubble ?? 3) * 1000;
-  const bubbles = activeBubbles(emotes, Date.now(), bubbleMs);
+  const chatBubbleMs = Math.max(4000, bubbleMs);
+  const nowMs = Date.now();
+  const bubbles = activeBubbles(emotes, nowMs, bubbleMs);
+  if (Array.isArray(chatMessages)) {
+    for (const m of chatMessages) {
+      if (!m || !m.playerId || typeof m.text !== 'string' || !m.receivedAt) continue;
+      if (nowMs - m.receivedAt >= chatBubbleMs) continue;
+      const cur = bubbles.get(m.playerId);
+      if (!cur || m.receivedAt >= (cur.at || 0)) {
+        bubbles.set(m.playerId, { kind: 'chat', text: m.text, seq: m.seq, at: m.receivedAt, ttl: chatBubbleMs });
+      }
+    }
+  }
   useTicker(bubbles.size ? 500 : 0); // re-render only while a bubble is showing (to expire it)
   const lastEmote = useRef(emotes.length ? emotes[emotes.length - 1].seq : 0);
   useEffect(() => {
@@ -2159,8 +2170,6 @@ function MatchScreen({ communication = null } = {}) {
             setSel(null);
             setBondOpen(null);
           }}><${Icon} name="signal" /></button>` : null}
-        ${prepLoadoutOpen && phase === PHASE.PREP && priv && !priv.ready && !spectator
-          ? html`<${LoadoutButton} from="prep" size="sm" />` : null}
         <button type="button" class="gm__gear" aria-label=${t('设置')} title=${t('设置')} onClick=${() => setSettingsOpen(true)}><${GIcon} name="gear" /></button>
         <button type="button" class="gm__gear gm__guide" aria-label=${t('玩法说明')} title=${t('玩法说明')} onClick=${() => openGuide(0)}><${Icon} name="book" /></button>
         <${FullscreenButton} class="gm__gear gm__fs" />

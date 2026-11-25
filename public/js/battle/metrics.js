@@ -104,3 +104,52 @@ export function combineCombat(records, ownerId = null) {
   }).sort((a, b) => b.damage - a.damage || b.healing - a.healing || a.key.localeCompare(b.key));
   return { rows: list, damage: list.reduce((n, r) => n + r.damage, 0), healing: list.reduce((n, r) => n + r.healing, 0) };
 }
+
+const ARTS_PROFESSIONS = new Set(['CASTER', 'SUPPORTER', 'MEDIC']);
+
+/** Convert a server `m.combatStats` broadcast into a `combineCombat`-compatible record. */
+export function serverCombatRecord(msg, lookupUnit = null) {
+  if (!msg || typeof msg !== 'object' || !msg.players || typeof msg.players !== 'object') return null;
+  const owners = Object.keys(msg.players);
+  const rows = [];
+  for (const ownerId of owners) {
+    const list = Array.isArray(msg.players[ownerId]) ? msg.players[ownerId] : [];
+    for (let i = 0; i < list.length; i++) {
+      const u = list[i];
+      if (!u || typeof u !== 'object') continue;
+      const dmg = positive(u.dmg);
+      const heal = positive(u.heal);
+      if (!dmg && !heal) continue;
+      const kind = u.kind === 'token' ? 'token' : 'op';
+      const rec = typeof lookupUnit === 'function' ? lookupUnit(kind, u.defId) : null;
+      const name = u.name || rec?.name || u.defId || '';
+      const picture = rec?.charId
+        ? { charId: rec.charId, isGolden: !!rec.isGolden, assets: { avatar: rec.avatar ?? rec.charId } }
+        : null;
+      const types = Object.fromEntries(DAMAGE_TYPES.map((t) => [t, 0]));
+      const primary = ARTS_PROFESSIONS.has(rec?.profession) ? 'arts' : 'phys';
+      types[primary] = dmg;
+      rows.push({
+        key: JSON.stringify([ownerId, u.uid != null ? `uid:${u.uid}` : `unit:${i}:${u.defId || name}`]),
+        ownerId,
+        uid: u.uid ?? null,
+        defId: u.defId || null,
+        name,
+        kind,
+        picture,
+        damage: dmg,
+        healing: heal,
+        types,
+      });
+    }
+  }
+  return {
+    seconds: positive(msg.seconds),
+    round: Number.isInteger(msg.round) && msg.round > 0 ? msg.round : 0,
+    kind: typeof msg.kind === 'string' ? msg.kind : 'normal',
+    source: 'server',
+    live: msg.live === true,
+    owners,
+    rows,
+  };
+}
