@@ -6,14 +6,17 @@ import { diyRecord } from '../../../shared/diy.js';
 import { DEFAULT_VERSION, LOBBY_DEFAULT_VERSION, VERSIONS, versionById } from '../../../shared/versions.js';
 import { t } from '../../../shared/i18n.js';
 import { data, useData } from '../data.js';
+import { store, useStore } from '../store.js';
+import { installContent } from '../content.js';
 import { audio } from '../audio.js';
 import { storedLobbyVersion } from '../versions.js';
 import { loadBrowserSim, SIM_DATA_FILES } from '../battle/simLoader.js';
 import { makeRunner } from '../battle/localPlayback.js';
 import {
-  BATTLE_CAP, bossSideOf, canPlaceInScene, chessRecordOf, clampBondLayers, defaultStageOf, editScene, emptyScene,
-  equipNeedsReplace, hasCombatants, legalTilesFor, prepViewState, sceneEquipment, sceneOperators,
-  sceneSpec, sceneStages, sceneTerrain, stageBosses, stageCoordOf,
+  applySavedLoadout, BATTLE_CAP, bossSideOf, canPlaceInScene, chessRecordOf, clampBondLayers, defaultStageOf,
+  editScene, emptyScene, equipNeedsReplace, hasCombatants, legalTilesFor, matchesCatalogueQuery, operatorBondNames,
+  pieceLoadoutMap, pieceOpsMap, prepViewState, sceneEquipment, sceneOperators, sceneSpec, sceneStages, sceneTerrain,
+  stageBosses, stageCoordOf,
 } from '../battle/testSceneModel.js';
 import { Button, html, Icon } from '../ui/components.js';
 import { BossRouteToggle } from '../ui/bossRouteToggle.js';
@@ -30,8 +33,11 @@ import { previewGrid, previewRecord, pieceDir } from '../ui/facing.js';
 import { isHealingRange, rangeStyle } from '../ui/rangeStyle.js';
 import { pieceTile } from '../render/drag.js';
 import {
-  closesOnFieldPress, deviceInfo, indexPieces, panelSide, panelSlots, shortcutFor, terrainInfo,
+  chessLoadout, closesOnFieldPress, deviceInfo, indexPieces, panelSide, panelSlots, shortcutFor, terrainInfo,
 } from '../ui/gameLogic.js';
+import { OperatorLoadoutDialog, isOperatorConfigured } from '../ui/operatorLoadoutDialog.js';
+import { loadoutStore, installSettingsViews, refreshViews } from '../ui/loadoutSync.js';
+import { skinsStore, SKINS_KEY } from '../ui/skins.js';
 import { settingsStore } from '../ui/settings.js';
 import { installDeviceSupport } from '../ui/device.js';
 import { initLang, useLang } from '../ui/lang.js';
@@ -56,6 +62,8 @@ function initialVersionId() {
   return storedLobbyVersion() || LOBBY_DEFAULT_VERSION;
 }
 
+let activeSceneVersion = initialVersionId();
+
 function recordOf({ id, kind, diy }) {
   if (kind === 'chess') {
     const chess = data.lookup('chess', id);
@@ -64,13 +72,22 @@ function recordOf({ id, kind, diy }) {
     }
     return chess;
   }
+  if (kind === 'token') return data.lookup('tokens', id) || data.get('backups')?.tokens?.[id] || null;
   return data.lookup(FILES[kind], id);
 }
 
 const nameOf = piece => recordOf(piece)?.name || piece?.diy?.charId || piece?.id;
-const pieceLookups = (base, raw, piece) => (piece?.diy
-  ? { ...base, getChess: id => (id === piece.id ? chessRecordOf(raw, piece) : base.getChess(id)) }
-  : base);
+const pieceLookups = (base, raw, piece) => {
+  const getChess = piece?.diy
+    ? id => (id === piece.id ? chessRecordOf(raw, piece) : base.getChess(id))
+    : base.getChess;
+  const loMap = pieceLoadoutMap(raw, piece);
+  return {
+    ...base,
+    getChess,
+    ...(loMap ? { chessRecord: rec => chessLoadout(rec, loMap, getChess)?.record || rec } : null),
+  };
+};
 
 function mapValueOf(stageId, fieldMode) {
   return fieldMode === 'boss' ? `${stageId}:boss` : stageId;
@@ -159,24 +176,45 @@ function Catalogue({ raw, scene, bossInfo, armed, onPick, onSelectBossMode, onSe
   const file = FILES[kind];
   const localized = data.get(file);
   const backups = data.get('backups');
+  const bonds = data.get('bonds');
   const rows = useMemo(() => {
     if (isBossField && kind === 'enemy') return [];
     if (kind === 'chess') {
+      const getBond = id => data.lookup('bonds', id);
+      const localeName = name => data.localeName(name);
       return sceneOperators(raw)
-        .map(op => ({
-          key: op.key, id: op.id, diy: op.diy, charId: op.charId,
-          name: nameOf({ id: op.id, kind: 'chess', diy: op.diy }),
-          original: op.rec.name, golden: op.golden, isDiy: op.isDiy,
-        }))
+        .map(op => {
+          const name = nameOf({ id: op.id, kind: 'chess', diy: op.diy });
+          const bondNames = operatorBondNames(raw, op.rec, { getBond, localeName });
+          const displayBonds = (Array.isArray(op.rec?.bonds) ? op.rec.bonds : [])
+            .map(id => {
+              const label = getBond(id)?.name || raw?.bonds?.[id]?.name;
+              return label ? localeName(label) : '';
+            })
+            .filter(Boolean);
+          return {
+            key: op.key, id: op.id, diy: op.diy, charId: op.charId,
+            name, original: op.rec.name, golden: op.golden, isDiy: op.isDiy,
+            title: displayBonds.length ? `${name} · ${displayBonds.join(' / ')}` : name,
+            searchTexts: [name, op.rec.name, op.id, op.charId, ...bondNames],
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name, lang) || a.key.localeCompare(b.key));
     }
     return Object.entries(raw[file])
       .filter(([, rec]) => kind === 'item' ? sceneEquipment(rec) : true)
-      .map(([id, rec]) => ({ key: id, id, diy: null, charId: null, name: nameOf({ id, kind }), original: rec.name, golden: rec.isGolden, isDiy: false }))
+      .map(([id, rec]) => {
+        const name = nameOf({ id, kind });
+        return {
+          key: id, id, diy: null, charId: null, name, original: rec.name,
+          golden: rec.isGolden, isDiy: false, title: name,
+          searchTexts: [name, rec.name, id],
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name, lang) || a.id.localeCompare(b.id));
-  }, [kind, raw, file, localized, backups, lang, isBossField]);
-  const q = query.trim().toLocaleLowerCase();
-  const filtered = rows.filter(row => [row.name, row.original, row.id, row.charId].some(text => text?.toLocaleLowerCase().includes(q)));
+  }, [kind, raw, file, localized, backups, bonds, lang, isBossField]);
+  const filtered = rows.filter(row => matchesCatalogueQuery(row.searchTexts, query));
+  const searchLabel = kind === 'chess' ? t('搜索名称、盟约或 ID') : t('搜索名称或 ID');
   return html`<aside class="ts-catalogue" data-testid="test-scene-catalogue">
     <div class="ts-kinds" role="group" aria-label=${t('选择类型')}>
       ${[['chess', t('干员')], ['item', t('装备')], ['enemy', isBossField ? t('Boss') : t('敌人')]].map(([key, label]) => html`
@@ -186,11 +224,11 @@ function Catalogue({ raw, scene, bossInfo, armed, onPick, onSelectBossMode, onSe
       <${BossPicker} bossInfo=${bossInfo} selectedBossId=${scene.bossId}
         onSelectMode=${onSelectBossMode} onSelectBoss=${onSelectBoss} />
     ` : html`
-      <input class="ts-search" type="search" value=${query} aria-label=${t('搜索名称或 ID')} placeholder=${t('搜索名称或 ID')}
+      <input class="ts-search" type="search" value=${query} aria-label=${searchLabel} placeholder=${searchLabel}
         onInput=${event => setQuery(event.currentTarget.value)} />
       <ul class="ts-catalogue__list" aria-label=${t('搜索结果')}>
-        ${filtered.map(({ key, id, diy, charId, name, golden, isDiy }) => html`<li key=${key}>
-          <button type="button" class="ts-pick" data-record=${key} data-char=${charId} title=${name} aria-pressed=${kind === 'enemy' ? armed === id : undefined}
+        ${filtered.map(({ key, id, diy, charId, name, title, golden, isDiy }) => html`<li key=${key}>
+          <button type="button" class="ts-pick" data-record=${key} data-char=${charId} title=${title} aria-pressed=${kind === 'enemy' ? armed === id : undefined}
             onClick=${() => onPick(kind, id, diy)}>
             <${Portrait} kind=${kind} id=${id} diy=${diy} />
             <span>${name}</span>
@@ -265,6 +303,7 @@ function TestScene() {
   const [detail, setDetail] = useState(null);
   const [bondOpen, setBondOpen] = useState(null);
   const [layerEditor, setLayerEditor] = useState(null);
+  const [configUid, setConfigUid] = useState(null);
   const [dragUid, setDragUid] = useState(null);
   const [facing, setFacing] = useState(null);
   const [holdSeq, setHoldSeq] = useState(0);
@@ -275,6 +314,15 @@ function TestScene() {
   const [finished, setFinished] = useState(false);
   const [battleStatus, setBattleStatus] = useState(null);
   const [battleMeta, setBattleMeta] = useState(null);
+  const loadoutState = useStore(s => s, Object.is, loadoutStore);
+  const localSkins = useStore(s => s[SKINS_KEY] || {}, Object.is, skinsStore);
+  const savedLoadout = useMemo(() => ({
+    entries: loadoutState.entries,
+    byChar: loadoutState.byChar,
+    ops: loadoutState.ops,
+    diy: loadoutState.diy,
+    skins: localSkins,
+  }), [loadoutState.entries, loadoutState.byChar, loadoutState.ops, loadoutState.diy, localSkins]);
 
   const stageAppliedRef = useRef(null);
   const modeRef = useRef('init');
@@ -291,6 +339,7 @@ function TestScene() {
     let active = true;
     const files = [...SIM_DATA_FILES, 'config', 'bosses'];
     const entry = versionById(versionId) || versionById(DEFAULT_VERSION);
+    activeSceneVersion = entry?.id || DEFAULT_VERSION;
     setBootError(false);
     setContent(null);
     stageAppliedRef.current = null;
@@ -322,12 +371,14 @@ function TestScene() {
       if (!stages.length) throw new Error('default test-scene stage unavailable');
       const startStage = defaultStageOf(stages);
       if (active) {
+        refreshViews({ version: entry?.id || DEFAULT_VERSION });
         setScene(emptyScene(startStage, 'normal'));
         setArmed(null);
         setSel(null);
         setDetail(null);
         setBondOpen(null);
         setLayerEditor(null);
+        setConfigUid(null);
         setRun(null);
         setFinished(false);
         setError('');
@@ -336,6 +387,11 @@ function TestScene() {
     })().catch(() => { if (active) setBootError(true); });
     return () => { active = false; };
   }, [attempt, versionId]);
+
+  useEffect(() => {
+    if (!content || run) return;
+    setScene(cur => applySavedLoadout(content.sim.raw, cur, savedLoadout));
+  }, [content, run, savedLoadout]);
 
   const stage = content?.sim.raw.stages[scene.stageId];
   const bossSide = bossSideOf(scene);
@@ -347,7 +403,7 @@ function TestScene() {
     : { modeId: null, difficulty: null, modes: [], bosses: [] }), [content, scene.fieldMode, scene.stageId, scene.bossModeId, bossSide]);
   const lookups = useMemo(() => content && ({
     getChess: id => content.sim.raw.chess[id],
-    getToken: id => content.sim.raw.tokens[id],
+    getToken: id => content.sim.raw.tokens[id] || content.sim.raw.backups?.tokens?.[id] || null,
     getItem: id => content.sim.raw.items[id],
   }), [content]);
   const view = viewState.view;
@@ -454,10 +510,14 @@ function TestScene() {
     const result = editScene(L.scene, action, { ...L.content, terrain: L.terrain });
     if (result.error) { refuse(result.error); return false; }
     setError('');
-    setScene(result.scene);
+    const nextScene = action.type === 'add'
+      ? applySavedLoadout(L.content.sim.raw, result.scene, L.savedLoadout)
+      : result.scene;
+    setScene(nextScene);
     if (action.type === 'remove') {
       setSel(s => s?.uid === action.uid ? null : s);
       setDetail(d => ((d?.kind === 'piece' && d.uid === action.uid) || (d?.kind === 'enemy' && d.uid === action.uid)) ? null : d);
+      setConfigUid(uid => (uid === action.uid ? null : uid));
     }
     return true;
   }, [refuse]);
@@ -521,8 +581,8 @@ function TestScene() {
   }, [edit, openReplace]);
 
   live.current = {
-    content, terrain, scene, prepPriv, pieces, armed, sel, detail, bondOpen, layerEditor, run, facing, dragUid, lookups,
-    view, edit, cancelFacing, equipOrReplace, refuse,
+    content, terrain, scene, prepPriv, pieces, armed, sel, detail, bondOpen, layerEditor, configUid, run, facing, dragUid, lookups,
+    savedLoadout, view, edit, cancelFacing, equipOrReplace, refuse,
   };
 
   // Sync prep scene (operators, equipment area, bench pads, placed enemies) into the live renderer.
@@ -553,12 +613,14 @@ function TestScene() {
 
   // Clear stale selection/detail when a piece disappears or combat starts.
   useEffect(() => {
-    if (run) { setSel(null); setArmed(null); setLayerEditor(null); }
+    if (run) { setSel(null); setArmed(null); setLayerEditor(null); setConfigUid(null); }
   }, [run]);
+  const configPiece = configUid != null ? pieces.get(configUid)?.piece || null : null;
   useEffect(() => {
     if (sel?.kind === 'piece' && !selPieceEntry) setSel(null);
     if (sel?.kind === 'enemy' && !selEnemy) setSel(null);
-  }, [sel, selPieceEntry, selEnemy]);
+    if (configUid != null && configPiece?.kind !== 'chess') setConfigUid(null);
+  }, [sel, selPieceEntry, selEnemy, configUid, configPiece]);
 
   // Resolve official DetailPanel data (supports standard & DIY pieces, items, placed enemies, battle units, terrain & devices).
   const detailTarget = useMemo(() => {
@@ -579,6 +641,12 @@ function TestScene() {
   useEffect(() => {
     if (detail && !resolved && detail.kind === 'piece') setDetail(null);
   }, [detail, resolved]);
+
+  const inspectedPiece = resolved?.piece?.kind === 'chess' ? resolved.piece : null;
+  const detailLoadout = useMemo(() => (content && inspectedPiece ? pieceLoadoutMap(content.sim.raw, inspectedPiece) : null), [content, inspectedPiece]);
+  const detailOps = useMemo(() => (content && inspectedPiece ? pieceOpsMap(content.sim.raw, inspectedPiece) : null), [content, inspectedPiece]);
+  const detailConfigured = Boolean(content && inspectedPiece
+    && isOperatorConfigured(content.sim.raw, { chessId: inspectedPiece.id, diy: inspectedPiece.diy }, savedLoadout));
 
   // Live stats & HP during combat for DetailPanel.
   const snapHp = (() => {
@@ -619,11 +687,11 @@ function TestScene() {
       field: battleMeta,
       snapshot: snapUnitsRef.current.get(resolved?.unitId),
       live: typeof liveStats === 'function' ? liveStats() : liveStats,
-      loadout: null,
+      loadout: detailLoadout,
       getChess,
       backups: data.get('backups'),
     });
-  }, [dragUid, facing, armed, detailTarget, resolved, pieces, run, battleMeta, liveStats, content, battleStatus?.time]);
+  }, [dragUid, facing, armed, detailTarget, resolved, pieces, run, battleMeta, liveStats, detailLoadout, content, battleStatus?.time]);
 
   const cardRangeKey = cardRange ? JSON.stringify(cardRange) : '';
 
@@ -671,6 +739,7 @@ function TestScene() {
     if (!root) return undefined;
     const onDown = e => {
       const L = live.current;
+      if (L.configUid != null || L.layerEditor) return;
       if (L.bondOpen && !e.target?.closest?.('.bpop, .bslot, .dpanel__bchip')) setBondOpen(null);
       if (L.detail && !e.target?.closest?.('.dpanel, .uframe, .ts-field, .ts-pick, .bpop')) setDetail(null);
       if (L.sel && !e.target?.closest?.('.uframe, .ts-field, .dpanel')) setSel(null);
@@ -733,7 +802,7 @@ function TestScene() {
             L.equipOrReplace(piece.uid, occ.uid);
             return;
           }
-          if (piece.kind === 'chess') {
+          if (piece.kind === 'chess' || piece.kind === 'token') {
             const probe = editScene(L.scene, { type: 'deploy', uid: piece.uid, row: target.row, col: target.col }, ctx);
             if (probe.error) { L.refuse(probe.error); return; }
             openFacing(piece, target.row, target.col);
@@ -775,7 +844,7 @@ function TestScene() {
             if (!occ) { L.refuse(t('请将装备拖拽至干员身上')); return; }
             const res = editScene(L.scene, { type: 'equip', uid: piece.uid, target: occ.uid }, ctx);
             if (res.error) L.refuse(res.error);
-          } else if (piece.kind === 'chess') {
+          } else if (piece.kind === 'chess' || piece.kind === 'token') {
             const res = editScene(L.scene, { type: 'deploy', uid: piece.uid, row: tile.row, col: tile.col }, ctx);
             if (res.error) L.refuse(res.error);
           }
@@ -876,6 +945,10 @@ function TestScene() {
     const clearPointer = () => { pointer = null; };
     const onKey = e => {
       const L = live.current;
+      if (e.key === 'Escape' && L.configUid != null) {
+        if (!document.querySelector('.modal')) { setConfigUid(null); e.preventDefault(); }
+        return;
+      }
       if (e.key === 'Escape' && L.layerEditor) { setLayerEditor(null); e.preventDefault(); return; }
       if (e.target instanceof Element && e.target.closest('input, textarea, select')) return;
       const act = shortcutFor(e, settingsStore.get().keys);
@@ -887,7 +960,7 @@ function TestScene() {
         if (L.detail || L.sel) { setDetail(null); setSel(null); e.preventDefault(); return; }
         return;
       }
-      if (L.run || L.dragUid != null || L.facing || L.layerEditor || replaceRef.current || pointer?.buttons) return;
+      if (L.run || L.dragUid != null || L.facing || L.layerEditor || L.configUid != null || replaceRef.current || pointer?.buttons) return;
       const isRemove = act === 'sell' || e.key === 'Delete' || e.key === 'Backspace';
       if (act === 'retreat' || isRemove) {
         let uid = L.sel ? L.sel.uid : null;
@@ -896,14 +969,15 @@ function TestScene() {
         e.preventDefault();
         if (act === 'retreat') {
           const entry = L.pieces.get(uid);
-          if (entry?.area === 'board' && entry.piece.kind === 'chess') {
+          if (entry?.area === 'board' && (entry.piece.kind === 'chess' || entry.piece.kind === 'token')) {
             if (L.edit({ type: 'retreat', uid })) {
               setSel(null);
               setDetail(d => (d?.kind === 'piece' && d.uid === uid ? null : d));
             }
           }
         } else {
-          L.edit({ type: 'remove', uid });
+          const entry = L.pieces.get(uid);
+          if (entry?.piece?.kind !== 'token') L.edit({ type: 'remove', uid });
         }
       }
     };
@@ -1027,6 +1101,7 @@ function TestScene() {
     setDetail(null);
     setBondOpen(null);
     setLayerEditor(null);
+    setConfigUid(null);
   };
 
   const pick = (kind, id, diy = null) => {
@@ -1108,6 +1183,7 @@ function TestScene() {
     setDetail(null);
     setBondOpen(null);
     setLayerEditor(null);
+    setConfigUid(null);
     setError('');
     setFinished(false);
     setRun(sceneSpec(content.sim, scene, terrain.goal, { config: content.config, bosses: content.bosses }));
@@ -1121,7 +1197,9 @@ function TestScene() {
   const ufShown = !!(ufTile && ufGeo);
 
   const ufActions = selPieceEntry
-    ? { retreat: selPieceEntry.area === 'board' && selPieceEntry.piece.kind === 'chess', sell: null, destroy: true }
+    ? (selPieceEntry.piece.kind === 'token'
+      ? (selPieceEntry.area === 'board' ? { retreat: true, sell: null, destroy: false } : null)
+      : { retreat: selPieceEntry.area === 'board' && selPieceEntry.piece.kind === 'chess', sell: null, destroy: true })
     : selEnemy ? { retreat: false, sell: null, destroy: true } : null;
   const ufName = selPieceEntry ? nameOf(selPieceEntry.piece) : selEnemy ? nameOf(selEnemy) : '';
 
@@ -1225,6 +1303,8 @@ function TestScene() {
             }} />` : null}
           ${resolved ? html`<${DetailPanel} detail=${resolved} snapHp=${snapHp} onClose=${() => { setDetail(null); setSel(null); }}
             side=${dSide} shopOpen=${false} live=${liveStats} voice=${true} unequipAllowed=${!run}
+            loadout=${detailLoadout} ops=${detailOps} configured=${detailConfigured}
+            onConfigure=${!run && inspectedPiece ? p => { setBondOpen(null); setConfigUid(p.uid); audio.sfx('click', { volume: 0.4 }); } : null}
             onBond=${id => openBond(id, 'detail')}
             onUnequip=${!run && resolved.piece?.kind === 'chess' ? itemUid => edit({ type: 'unequip', uid: resolved.piece.uid, itemUid }) : null} />` : null}
           ${ufShown && ufActions ? html`<${Underframe} key=${sel.uid} view=${view} uid=${sel.uid}
@@ -1255,12 +1335,23 @@ function TestScene() {
       onPreview=${previewFacing} onCommit=${commitFacing} onCancel=${cancelFacing} />` : null}
     ${layerEditor ? html`<${BondLayerDialog} bondId=${layerEditor.bondId} initialLayers=${layerEditor.initialLayers}
       onConfirm=${confirmBondLayers} onCancel=${() => setLayerEditor(null)} />` : null}
+    ${!run && content && configPiece ? html`<${OperatorLoadoutDialog}
+      chessId=${configPiece.id} diy=${configPiece.diy} golden=${Boolean(configPiece.golden)}
+      ownerId="test-scene" raw=${content.sim.raw}
+      onClose=${() => setConfigUid(null)} />` : null}
     ${replace ? html`<${EquipReplaceDialog} request=${replace.request} getItem=${id => data.lookup('items', id)}
       onConfirm=${uid => closeReplace(uid)} onCancel=${() => closeReplace(null)} />` : null}
     <${ToastHost} />
   </main>`;
 }
 
+store.set({ me: { ...store.get().me, playerId: 'test-scene' } });
+installContent({ toast });
+installSettingsViews({ versionOf: () => activeSceneVersion });
+fetch('/healthz', { cache: 'no-cache' })
+  .then(r => (r.ok ? r.json() : null))
+  .then(j => { if (Number.isInteger(j?.plugins) && j.plugins > 0) store.set({ installedPlugins: j.plugins }); })
+  .catch(() => {});
 installDeviceSupport();
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 await initLang();

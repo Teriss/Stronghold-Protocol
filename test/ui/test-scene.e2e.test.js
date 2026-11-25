@@ -51,12 +51,15 @@ test('public test scene enters from the lobby, mirrors real-game prep/combat, su
       assert.equal(await page.$eval(SELECT, el => el.value), 'act3autochess_m01');
       assert.equal(await page.$eval(SELECT, el => el.options.length), 20, '10 normal + 10 boss maps in 规程');
 
-      // Verify 规程·序列Ⅰ operator 云迹 is present in the catalogue.
+      // Verify 规程·序列Ⅰ operator 云迹 is present in the catalogue, and bond-name search works.
       await page.click('.ts-kinds [data-kind="chess"]');
       const regSearch = await page.$('.ts-search');
       await regSearch.click({ count: 3 });
       await page.keyboard.type('云迹');
       await page.waitForSelector('.ts-pick[data-char="char_4165_ctrail"]');
+      await regSearch.click({ count: 3 });
+      await page.keyboard.type('乌萨斯');
+      await page.waitForSelector('.ts-pick[data-record="chess_char_1_01_a"]');
 
       // Switch to 第二期下半 (act2autochess) via the version selector and verify full prep/combat workflow.
       await page.select(VERSION, 'act2autochess');
@@ -124,12 +127,19 @@ test('public test scene enters from the lobby, mirrors real-game prep/combat, su
       await dragEl(page, `.ff-piece[data-area="temp"][data-piece="${item}"]`, tile(10, 4));
       await page.waitForFunction(() => !document.querySelector('.ff-piece[data-area="temp"]'));
 
-      // Clicking deployed operator opens DetailPanel (with 2 equipped items) + Underframe (retreat & destroy).
+      // Clicking deployed operator opens DetailPanel (with 2 equipped items + 干员调配) + Underframe (retreat & destroy).
       await page.click(`.ff-piece[data-area="board"][data-piece="${chess}"][data-row="10"][data-col="4"]`);
       await page.waitForSelector('.dpanel--chess');
       await page.waitForSelector('.uframe__btn--retreat');
       await page.waitForSelector('.uframe__btn--destroy');
       assert.equal(await page.$$eval('[data-testid="unequip"]', els => els.length), 2);
+      await page.click('[data-testid="test-scene-configure"]');
+      await page.waitForSelector('[data-testid="test-scene-loadout-modal"]');
+      await page.click('[data-testid="test-scene-loadout-modal"] [data-skill="0"]');
+      await page.click('[data-testid="test-scene-loadout-modal"] [data-potential="1"]');
+      await page.click('[data-testid="test-scene-loadout-done"]');
+      await page.waitForFunction(() => !document.querySelector('[data-testid="test-scene-loadout-modal"]'));
+      await page.waitForSelector('.dpanel--chess .dtag-loadout');
 
       // Fill bench to 10/10 and verify bench-full refusal; fill equipment area to 5/5 and verify equip-full refusal.
       for (let i = 0; i < 10; i++) await pick('chess', chess);
