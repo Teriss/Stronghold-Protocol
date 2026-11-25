@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { loadData } from '../../server/data.js';
 import { setGameData } from '../../server/sim/content/support/index.js';
 import { acquireTargets } from '../../server/sim/ai.js';
+import { canTargetEnemy, enemyStealthed } from '../../server/sim/targeting.js';
 import { makeBattle, chessRec, enemyRec } from '../helpers/battleHarness.js';
 import { payKjeragIce, tempBondLayers, EFFECT_KEYED_BONDS } from '../../server/sim/content/bonds/regulation.js';
 import { bondBb } from '../../server/sim/content/bonds/addon/battle.js';
@@ -1361,7 +1362,7 @@ describe('规程·序列Ⅰ bonds', { concurrency: 1 }, () => {
     close(before - p.hp, 850, 'shelter 15%, not 30%');
   });
 
-  test('奥术 rider arts, RES floor at 3, stealth stripped in range', (t) => {
+  test('奥术 rider arts, RES floor at 3, stealth revealed in range', (t) => {
     const one = fight(t, {
       bonds: { arcaneShip: bond(1, 0, 1) },
       pieces: [piece('reg_ar1', ['arcaneShip'], { rangeGrid: [[0, 0], [-1, 0]] })],
@@ -1373,7 +1374,8 @@ describe('规程·序列Ⅰ bonds', { concurrency: 1 }, () => {
     one.b.dealDamage({ source: m, target: e, amount: 100, type: 'phys' });
     close(hp - e.hp, 200, '100 phys + 0.2×atk arts');
     one.b.applyStatus(e, 'stealth', { duration: 5, source: null });
-    assert.equal(!!e.s.flags.stealth, true);
+    assert.equal(enemyStealthed(e), true);
+    assert.equal(canTargetEnemy(m, e), false);
 
     const h = fight(t, {
       bonds: { arcaneShip: bond(3, 0, 2) },
@@ -1389,7 +1391,33 @@ describe('规程·序列Ⅰ bonds', { concurrency: 1 }, () => {
     assert.ok(res);
     close(res.mods.resFlat, -2, 'the phys hit and the rider each drop RES');
     h.b.applyStatus(tnk, 'stealth', { duration: 5, source: null });
-    assert.equal(!!tnk.s.flags.stealth, false);
+    assert.equal(enemyStealthed(tnk), false, 'tier 2 reveals status stealth in range');
+    assert.equal(canTargetEnemy(u, tnk), true);
+
+    // Innate permanent stealth (ab:stealth, not applied via applyStatus) outside then entering then leaving range
+    const inv = tank(h, [10, 6]);
+    h.b.addBuff(inv, { key: 'ab:stealth', flags: { stealth: true }, persist: true });
+    h.step();
+    assert.equal(enemyStealthed(inv), true, 'innate stealth holds outside Arcane range');
+    assert.equal(canTargetEnemy(u, inv), false);
+
+    inv.y = 9; inv.x = 4;
+    h.step();
+    assert.equal(enemyStealthed(inv), false, 'entering Arcane range reveals innate stealth');
+    assert.equal(canTargetEnemy(u, inv), true);
+
+    inv.y = 10; inv.x = 6;
+    h.step();
+    assert.equal(enemyStealthed(inv), true, 'leaving Arcane range restores innate stealth');
+    assert.equal(canTargetEnemy(u, inv), false);
+
+    // Operator down removes the reveal aura
+    inv.y = 9; inv.x = 4;
+    h.step();
+    assert.equal(enemyStealthed(inv), false);
+    h.b.retreat(u);
+    h.step();
+    assert.equal(enemyStealthed(inv), true, 'retreated Arcane member no longer reveals');
   });
 
   test('精准 迅捷 灵巧 坚守 助力 use the season blackboards', (t) => {

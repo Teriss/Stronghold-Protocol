@@ -730,18 +730,39 @@ export function installArcaneExtra(battle) {
     if (engine > 0 && Math.abs(official - engine) > 1e-9) mods.artsTakenMul = official / engine;
     S.passiveBuff(battle, t, 'bond:arcane:res', mods);
   });
-  battle.on('statusApplied', (c) => {
-    if (!c || c.status !== 'stealth' || !c.target || c.target.side !== 'enemy') return;
+  const revealKey = 'bond:arcane:reveal';
+  const powerCnt = sample.power_bond_char_cnt;
+  const syncReveal = () => {
+    const members = [];
     for (const p of battle.players || []) {
       const pid = p.playerId;
-      if (!reached(battle, pid, 'arcaneShip', bondBb('arcaneShip', K.arcane).power_bond_char_cnt)) continue;
-      const members = S.bondMembers(battle, pid, 'arcaneShip', { fieldOnly: true });
-      if (members.some((m) => S.inRange(m, c.target))) {
-        battle.removeStatus(c.target, 'stealth');
-        return;
+      if (!reached(battle, pid, 'arcaneShip', powerCnt)) continue;
+      for (const m of S.bondMembers(battle, pid, 'arcaneShip', { fieldOnly: true })) members.push(m);
+    }
+    for (const e of battle.enemies) {
+      if (!e.alive) continue;
+      const has = !!e.findBuff(revealKey);
+      if (e.hidden || !e.s.flags.stealth || !members.length) {
+        if (has) battle.removeBuff(e, revealKey);
+        continue;
+      }
+      if (members.some((m) => S.inRange(m, e))) {
+        if (!has) {
+          const was = !!e.s.flags.reveal;
+          battle.addBuff(e, { key: revealKey, flags: { reveal: true } });
+          if (!was) battle.fx('reveal', { x: e.x, y: e.y, id: e.id });
+        }
+      } else if (has) {
+        battle.removeBuff(e, revealKey);
       }
     }
-  });
+  };
+  battle.on('tick', syncReveal);
+  battle.on('battleStart', syncReveal);
+  battle.on('enemySpawn', syncReveal);
+  battle.on('deploy', ({ unit }) => { if (unit?.kind === 'op') syncReveal(); });
+  battle.on('death', ({ unit }) => { if (unit?.kind === 'op') syncReveal(); });
+  battle.on('statusApplied', (c) => { if (c?.status === 'stealth' && c.target?.side === 'enemy') syncReveal(); });
 }
 
 /** Extra arts hit of the act3 奥术 rider. addon calls this only when base_damage_scale is absent. */
