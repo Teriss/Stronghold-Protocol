@@ -528,3 +528,46 @@ test('entry badge (review fix): counts like the screen once chess.json is loaded
   assert.equal(badgeCount(entries, get), changedCount(entries, get));
   assert.equal(badgeCount({}, get), 0);
 });
+
+test('setByCharChoice persists DIY charId choices without polluting standard entries, and flushLoadoutSyncs flushes pending edits immediately', async () => {
+  const { setByCharChoice, flushLoadoutSyncs, loadoutStore, installLoadoutSync } = await import('../../public/js/ui/loadoutSync.js');
+  const { resolveSavedDiyPick, isOperatorConfigured } = await import('../../public/js/ui/operatorLoadoutDialog.js');
+  const backups = JSON.parse(readFileSync(path.join(ROOT, 'data/backups.json'), 'utf8'));
+  const dataRaw = { chess: CHESS, backups };
+  const slotId = Object.keys(CHESS).find((id) => CHESS[id]?.isDiy && !CHESS[id]?.isGolden && CHESS[id]?.tier === 6);
+  assert.ok(slotId);
+  const KALTS = 'char_003_kalts';
+  const prevByChar = loadoutStore.get().byChar;
+  const prevEntries = loadoutStore.get().entries;
+  try {
+    setByCharChoice(KALTS, { skill: 1, module: MODULE_NONE });
+    assert.deepEqual(loadoutStore.get().byChar[KALTS], { skill: 1, module: MODULE_NONE });
+    assert.equal(Object.hasOwn(loadoutStore.get().entries, KALTS), false, 'DIY charId does not pollute chess-id entries');
+    const resolved = resolveSavedDiyPick(dataRaw, slotId, KALTS, { byChar: loadoutStore.get().byChar, diy: {} });
+    assert.equal(resolved.pick.skillIndex, 1);
+    assert.equal(resolved.pick.uniEquipId, null);
+    assert.equal(isOperatorConfigured(dataRaw, { chessId: slotId, diy: { charId: KALTS } }, { entries: {}, byChar: loadoutStore.get().byChar, ops: {}, diy: {}, skins: {} }), true);
+    setByCharChoice(KALTS, null);
+    assert.equal(Object.hasOwn(loadoutStore.get().byChar, KALTS), false);
+  } finally {
+    loadoutStore.set({ byChar: prevByChar, entries: prevEntries });
+  }
+
+  // flushLoadoutSyncs immediately sends a debounced edit before SYNC_DEBOUNCE_MS elapses.
+  const net = deferredNet();
+  const T = fakeTimers();
+  const target = syncStore({});
+  const s = installLoadoutSync({ net, timers: T, target, getChessReady: async () => CHESS, lookupChess: get, notify: () => {} });
+  net.emit('welcome', {});
+  await T.advance(100);
+  await net.reply();
+  target.set({ entries: { [INSIDE]: { skill: 0 } } });
+  assert.equal(net.sent.length, 1, 'still debounced before flush');
+  flushLoadoutSyncs();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(net.sent.length, 2, 'flushLoadoutSyncs sent the pending loadout edit immediately');
+  assert.deepEqual(net.sent[1].entries, { [INSIDE]: { skill: 0 } });
+  s.dispose();
+});

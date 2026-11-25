@@ -95,6 +95,10 @@ import { ShopBar } from '../ui/shopBar.js';
 import { regLook } from '../ui/regHud.js';
 import { selectedBondTimers } from '../ui/bondTimers.js';
 import { DetailPanel, resolveDetail } from '../ui/detailPanel.js';
+import { OperatorLoadoutDialog, isOperatorConfigured } from '../ui/operatorLoadoutDialog.js';
+import { loadoutStore, flushLoadoutSyncs } from '../ui/loadoutSync.js';
+import { skinsStore, SKINS_KEY } from '../ui/skins.js';
+import { isPrototypePick } from '../../../shared/diy.js';
 import { RewardOverlay } from '../ui/rewardOverlay.js';
 import { FinalAssaultPlate, HiddenCorePlate, EndPlate, preloadBossPlateArt, bossPlateArtReady, finalPlateRows, endPlateOf } from '../ui/bossPlates.js';
 import { DownedPlate, downedDue, preloadDownedArt, downedArtReady } from '../ui/downedPlate.js';
@@ -136,7 +140,7 @@ import {
   terrainInfo, deviceInfo, deviceTipAt, noteDeviceUnits, deviceUnitsForEntry,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
   previewEnemyKey, prepCamera, prepCameraFor, deployFoldsShop, deployZoomStep, deployZoomRemember, prepDeployCamera, deployFieldOf, fieldTile, panelSide, panelSlots, bondPopupPlace, unitLoadout, deployedRecord,
-  mergeTarget, mergeProgress, modeOffBonds, readyFundsPrompt, readyCommandPrompt, readyPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownStandIn, roundStartReplay, heldDraftPub,
+  mergeTarget, mergeProgress, modeOffBonds, readyFundsPrompt, readyCommandPrompt, readyPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownDiyPick, ownStandIn, roundStartReplay, heldDraftPub,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { LoadoutButton } from './loadout.js';
@@ -412,6 +416,16 @@ function MatchScreen({ communication = null } = {}) {
   const prepLoadoutOpen = ruleOption(roomRules, 'prepLoadout') === 'prep';
   const hasOffers = !!pub?.offers?.length;
   const editable = !offerBlocksPrep(pub?.offers) && phase === PHASE.PREP && !!priv && alive && !priv.ready && !watchingOther && !hasPersonalChoice;
+  const [configOp, setConfigOp] = useState(null);        // single-operator loadout modal: { chessId, diy, golden }
+  const loadoutState = useStore((s) => s, Object.is, loadoutStore);
+  const localSkins = useStore((s) => s[SKINS_KEY] || {}, Object.is, skinsStore);
+  const closeConfigOp = useCallback(() => {
+    setConfigOp(null);
+    flushLoadoutSyncs();
+  }, []);
+  useEffect(() => {
+    if (configOp && (!editable || !prepLoadoutOpen)) closeConfigOp();
+  }, [configOp, editable, prepLoadoutOpen, closeConfigOp]);
   const showShop = !!priv && alive && (phase === PHASE.PREP || phase === PHASE.SP_DRAFT || phase === PHASE.ROUND_START) && !watchingOther;
   const layersDisabled = phase === PHASE.UNITE || isBossPhase(phase);
   const sp = phase === PHASE.SP_DRAFT ? normalizeSp(pub?.sp, players) : null;
@@ -1241,6 +1255,7 @@ function MatchScreen({ communication = null } = {}) {
       const now = live.current;
       if (!ok || now.pub?.phase !== PHASE.PREP || now.priv?.ready) return;
     }
+    if (r) flushLoadoutSyncs();
     setReadyBusy(true);
     await actions.ready(r);
     setReadyBusy(false);
@@ -1759,7 +1774,7 @@ function MatchScreen({ communication = null } = {}) {
       const L = live.current;
       if (document.querySelector('.offerov[role="dialog"]')) return; // Only the visible dialog owns keyboard input.
       // dialogs / the guide own the keyboard; behind the 本局信息 / 敌方情报 drawer only Esc (closing it) acts
-      if (shortcutBlocked(act, { modal: !!document.querySelector('.modal, .guide'), drawer: !!L.drawer })) return;
+      if (shortcutBlocked(act, { modal: !!document.querySelector('.modal, .guide, .ts-loadout-modal'), drawer: !!L.drawer })) return;
       // Spectating, eliminated, watching another board, or AI 托管: prep shortcuts do nothing. Esc still closes,
       // except a pending 教鞭 choice, whose overlay keeps Escape. Solo pause is below and does not run for these seats.
       const suspended = prepShortcutsSuspended({
@@ -1976,6 +1991,38 @@ function MatchScreen({ communication = null } = {}) {
     }
     return priv?.loadout ?? null; // own pieces, shop / reward / bond-member cards
   })();
+  const detailConfigureTarget = (() => {
+    if (!editable || !prepLoadoutOpen || !resolved || resolved.type !== 'chess' || resolved.standIn || detailTarget?.foreign) return null;
+    const owned = Boolean(resolved.piece)
+      || (detailTarget?.kind === 'chess' && (!detailTarget.owner || detailTarget.owner === myId))
+      || (detailTarget?.kind === 'unit' && detailTarget.unit?.ownerId === myId);
+    if (!owned) return null;
+    const chessRec = resolved.chess;
+    if (!chessRec?.chessId) return null;
+    const rawChess = data.getRaw('chess') || data.get('chess') || {};
+    const rawBackups = data.getRaw('backups') || data.get('backups') || null;
+    const golden = Boolean(resolved.piece?.golden ?? chessRec.isGolden);
+    if (chessRec.isDiy) {
+      const pick = resolved.diy || ownDiyPick(priv, chessRec);
+      if (!pick?.charId) return null;
+      if (isPrototypePick({ chess: rawChess, backups: rawBackups }, chessRec.tier, pick.charId)) return null;
+      return { chessId: chessRec.chessId, diy: pick, golden };
+    }
+    return { chessId: chessRec.chessId, diy: null, golden };
+  })();
+  const detailConfigured = detailConfigureTarget
+    ? isOperatorConfigured(null, detailConfigureTarget, { ...loadoutState, skins: localSkins })
+    : false;
+  const openDetailConfig = () => {
+    if (!detailConfigureTarget) return;
+    data.load('effects');
+    data.load('garrisons');
+    data.load('backups');
+    data.load('assets');
+    setBondOpen(null);
+    setConfigOp(detailConfigureTarget);
+    audio.sfx('click', { volume: 0.4 });
+  };
   // the open detail card's unit draws its attack range on the field (screens/game/range.js inspectRange, GitHub PR #281):
   // an own board piece or read-only prepared map character in prep; in battle or on a scouted board an ally
   // operator / summon on the field — the range it fights with now (the live stats' `range` and `dir`, the snapshot's
@@ -2135,6 +2182,8 @@ function MatchScreen({ communication = null } = {}) {
       ${resolved ? html`<${DetailPanel} detail=${resolved} snapHp=${snapHp} onClose=${() => { setDetail(null); setSel(null); }}
         bonds=${detailBonds} offBonds=${offBonds} loadout=${detailLoadout} ops=${priv?.ops ?? null} side=${dSide} shopOpen=${shopOpen} live=${liveStats} bondTimers=${bondTimers} voice=${true}
         morphMode=${morphMode} unequipAllowed=${unequipAllow}
+        configured=${detailConfigured}
+        onConfigure=${detailConfigureTarget ? openDetailConfig : null}
         onUnequip=${editable && unequipAllow ? (itemUid) => actions.unequip(itemUid) : null}
         onBond=${(id) => openBond(id, detailOwner, 'detail')} />` : null}
 
@@ -2194,6 +2243,10 @@ function MatchScreen({ communication = null } = {}) {
 
     ${replace ? html`<${EquipReplaceDialog} request=${replace.request} getItem=${gd.item}
       onConfirm=${(uid) => closeReplace(uid)} onCancel=${() => closeReplace(null)} />` : null}
+
+    ${configOp && editable && prepLoadoutOpen ? html`<${OperatorLoadoutDialog}
+      chessId=${configOp.chessId} diy=${configOp.diy} golden=${configOp.golden} ownerId=${myId}
+      onClose=${closeConfigOp} />` : null}
 
     <${SettingsModal} open=${settingsOpen} onClose=${() => setSettingsOpen(false)} />
     <${DownedPlate} open=${downed} onWatch=${() => setDowned(false)} onLeave=${() => { setDowned(false); setExitOpen(true); }} />

@@ -88,9 +88,9 @@ export function SkinPreview({ art = null, name = '' }) {
  * and one operator's normal, elite and 自选 pieces are the same operator, so one entry covers all three (the server's
  * `ps.skins[charId]` agrees — server/match/match/views.js `skinFor`). That is also why the panel needs nothing but the
  * charId: a 自选 slot passes the operator its pick fields.
- * @param {{ charId: string }} props
+ * @param {{ charId: string, value?: string|null, onChange?: ((skinId: string|null) => void)|null }} props
  */
-export function SkinSection({ charId }) {
+export function SkinSection({ charId, value = undefined, onChange = null }) {
   // the choice (this module's store) and the composed manifest (the catalogue): either can change while the panel is
   // open — the player picks a skin, a plugin's document lands, a layer is switched off
   const s = useStore((v) => v, Object.is, skinsStore);
@@ -106,7 +106,15 @@ export function SkinSection({ charId }) {
   // an operator the composed manifest does not hold at all has nothing to draw — not even a 默认 tile — so it gets no
   // section rather than an empty grid: the global rule can only show what the manifest has
   if (!rows.length) return null;
-  const chosen = chosenSkin(id, s[SKINS_KEY]);
+  const controlled = typeof onChange === 'function';
+  const chosen = controlled
+    ? (typeof value === 'string' && value && rows.some((x) => !x.own && x.id === value) ? value : null)
+    : chosenSkin(id, s[SKINS_KEY]);
+  const pick = (nextSkinId) => {
+    if (controlled) onChange(nextSkinId || null);
+    else if (nextSkinId) setSkin(id, nextSkinId);
+    else clearSkin(id);
+  };
   // the tile art of a row is already resolved (its own portrait, else the operator's); `face` is the same appearance's
   // 1:1 avatar, which CSS draws instead of the 1:2 art when the panel is too short for it. The enlarged preview prefers
   // the 立绘 — a 1024 px+ picture — and is only offered for a skin (the 默认 tile's own portrait is not a poster)
@@ -124,7 +132,7 @@ export function SkinSection({ charId }) {
     </header>
     <div class="lo-skins" role="radiogroup" aria-label=${t('选择皮肤')}>
       ${shown.map((row) => html`<${SkinTile} key=${row.own ? 'default' : row.id} row=${row} chosen=${row.own ? !chosen : chosen === row.id}
-        onPick=${() => (row.own ? clearSkin(id) : setSkin(id, row.id))} onPreview=${() => setPreview(row.id)} />`)}
+        onPick=${() => pick(row.own ? null : row.id)} onPreview=${() => setPreview(row.id)} />`)}
     </div>
     <${Modal} open=${!!previewRow} title=${previewRow ? previewRow.name : t('外观预览')} micro="SKIN PREVIEW"
       onClose=${() => setPreview(null)} width="min(92vw, 900px)">

@@ -970,8 +970,8 @@
         },
         "prepLoadout": {
           "enum": [
-            "locked",
-            "prep"
+            "prep",
+            "locked"
           ]
         },
         "morphPairing": {

@@ -2114,6 +2114,7 @@
   "规则：{text}": "Rules: {text}",
   "商店装备偏向已激活盟约": "Shop equipment is biased toward active bonds",
   "休整期可调整技能与模组": "Skills and modules can be changed during prep",
+  "休整期锁定干员调配": "Operator loadout is locked during prep",
   "变形同构体不占格，仅配对最左盟约装备": "Morphs use no slot and pair only with the leftmost bond item",
   "可以卸下装备": "Equipment can be unequipped",
   "卸下": "Unequip",

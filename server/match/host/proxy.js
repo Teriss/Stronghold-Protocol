@@ -134,6 +134,7 @@ export class MatchProxy {
    */
   acceptAiHandover(botId, name) { return this._request('acceptAiHandover', [botId, name]); }
   setLoadout(playerId, loadout, ops) { return this._request('setLoadout', [playerId, loadout, ops]); }
+  setDiy(playerId, picks) { return this._request('setDiy', [playerId, picks]); }
   requestSetupReroll(playerId, revision) { return this._request('requestSetupReroll', [playerId, revision]); }
   cancelSetupReroll(playerId, voteId) { return this._request('cancelSetupReroll', [playerId, voteId]); }
   onDisconnect(playerId) { this._notify('onDisconnect', [playerId]); }

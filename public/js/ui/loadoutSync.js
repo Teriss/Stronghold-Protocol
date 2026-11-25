@@ -47,7 +47,7 @@ import { ruleOption } from '../../../shared/plugins/rules.js';
 import { OWNERSHIP_PREF, parseStoredOwnership, parseStoredOwnershipChars, toStoredOwnership, toStoredOwnershipV1, cleanIds, sanitizeNotOwned,
   notOwnedView, rebaseChars } from './ownershipModel.js';
 import { parseStoredDiy, toStoredDiy, cleanPicks, sanitizeDiyPicks, diyPrefKey } from './diyModel.js';
-import { skinsStore, SKINS_KEY, SKINS_SYNC_KEY, parseStoredSkins } from './skins.js';
+import { skinsStore, SKINS_KEY, SKINS_SYNC_KEY, SKINS_PREF, parseStoredSkins } from './skins.js';
 import { cardStore, CARD_KEY, CARD_SYNC_KEY, cardOperators } from './seatArt.js';
 import { needsContent, serverDefaultVersion } from '../versions.js';
 import { DEFAULT_VERSION } from '../../../shared/versions.js';
@@ -109,12 +109,14 @@ export function shownCharMap() {
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+let activeVersionOf = pageVersion;
+
 /**
  * Rebuild the views for the data on screen (`entries` / `notOwned` from byChar / notOwnedChars, `diy` from the version's
  * own key) — whenever the shown data changes (installSettingsViews) and before a send (the sync's prepare).
- * @param {{ target?: typeof loadoutStore }} [opts]
+ * @param {{ target?: typeof loadoutStore, version?: string|null }} [opts]
  */
-export function refreshViews({ target = loadoutStore } = {}) {
+export function refreshViews({ target = loadoutStore, version = null } = {}) {
   const s = target.get();
   const patch = {};
   const map = shownCharMap();
@@ -128,8 +130,8 @@ export function refreshViews({ target = loadoutStore } = {}) {
     if (!same(view, s.notOwned)) patch.notOwned = view;
     viewMaps.set(patch.notOwned || s.notOwned, map);
   }
-  const version = pageVersion();
-  if (version !== s.diyVersion) { patch.diy = readStoredDiy(version); patch.diyVersion = version; }
+  const v = typeof version === 'string' && version ? version : activeVersionOf();
+  if (v !== s.diyVersion) { patch.diy = readStoredDiy(v); patch.diyVersion = v; }
   if (Object.keys(patch).length) target.set(patch);
 }
 
@@ -212,14 +214,47 @@ export function migrateSettings({ fetch: doFetch, target = loadoutStore } = {}) 
 }
 
 /**
- * Keep the views in step with the data on screen (main.js, once): every change of the chess or the config data (a
- * version set, a gameplay plugin room's set, the server's files again). Returns the uninstall.
+ * Keep the views in step with the data on screen (main.js / testScene.js, once): every change of the chess or the
+ * config data (a version set, a gameplay plugin room's set, the server's files again), plus cross-tab localStorage
+ * edits so formal matches, test scenes, and the 干员调配 screen always share the exact same saved settings.
+ * Returns the uninstall.
+ * @param {{ versionOf?: () => string }} [opts]
  */
-export function installSettingsViews() {
+export function installSettingsViews({ versionOf = pageVersion } = {}) {
+  activeVersionOf = typeof versionOf === 'function' ? versionOf : pageVersion;
   const off = data.subscribe((name) => { if (name === 'chess' || name === 'config') refreshViews(); });
+  const onStorage = (e) => {
+    const key = e && typeof e.key === 'string' ? e.key : null;
+    if (!key || key === `sp.pref.${LOADOUT_PREF}`) {
+      const raw = readPref(LOADOUT_PREF);
+      const nextByChar = raw?.v === 2 ? parseStoredByChar(raw) : loadoutStore.get().byChar;
+      const nextOps = parseStoredOps(raw);
+      const cur = loadoutStore.get();
+      const patch = {};
+      if (nextByChar && !same(nextByChar, cur.byChar)) patch.byChar = nextByChar;
+      if (!same(nextOps, cur.ops)) patch.ops = nextOps;
+      if (Object.keys(patch).length) loadoutStore.set(patch);
+      refreshViews();
+    }
+    const diyKey = `sp.pref.${diyPrefKey(loadoutStore.get().diyVersion)}`;
+    if (!key || key === diyKey) {
+      const nextDiy = readStoredDiy(loadoutStore.get().diyVersion);
+      if (!same(nextDiy, loadoutStore.get().diy)) loadoutStore.set({ diy: nextDiy });
+    }
+    if (!key || key === `sp.pref.${SKINS_PREF}`) {
+      const nextSkins = parseStoredSkins(readPref(SKINS_PREF));
+      if (!same(nextSkins, skinsStore.get()[SKINS_KEY])) skinsStore.set({ [SKINS_KEY]: nextSkins });
+    }
+  };
+  const win = typeof globalThis.window !== 'undefined' ? globalThis.window : null;
+  win?.addEventListener?.('storage', onStorage);
   void migrateSettings();
   refreshViews();
-  return off;
+  return () => {
+    off?.();
+    win?.removeEventListener?.('storage', onStorage);
+    if (activeVersionOf === versionOf) activeVersionOf = pageVersion;
+  };
 }
 
 /** The charId of a chess id: the view's map, else `lookup` (a caller's chess lookup), else the data on screen. */
@@ -265,6 +300,32 @@ export function setOpsMap(ops) {
   const next = ops && typeof ops === 'object' ? ops : {};
   persistLoadout({ ...loadoutStore.get(), ops: next });
   loadoutStore.set({ ops: next });
+}
+
+const UNSAFE_CHAR_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Set or clear one operator's skill / module directly by `charId` (used for DIY operators whose charId has no
+ * standard chess slot in `entries`, while keeping `sp.pref.loadout` v2 as the single source of truth).
+ * @param {string} charId
+ * @param {{ skill?: number, module?: string } | null} choice
+ */
+export function setByCharChoice(charId, choice) {
+  if (typeof charId !== 'string' || !charId || UNSAFE_CHAR_KEYS.has(charId)) return;
+  const s = loadoutStore.get();
+  if (!s.byChar) return;
+  const next = { ...s.byChar };
+  const entry = {};
+  if (choice && typeof choice === 'object') {
+    if (Number.isInteger(choice.skill) && choice.skill >= 0) entry.skill = choice.skill;
+    if (typeof choice.module === 'string' && choice.module) entry.module = choice.module;
+  }
+  if (Object.keys(entry).length) next[charId] = entry;
+  else delete next[charId];
+  if (same(next, s.byChar)) return;
+  storeLoadout(next, s.ops);
+  loadoutStore.set({ byChar: next });
+  refreshViews();
 }
 
 /**
@@ -435,6 +496,15 @@ export function canSendSettings({ store: app = store, content = appContentSet, c
  * content change only when the payload changed (a version switch or a room's arrival then spends no heavy-message budget
  * on them).
  */
+const activeFlushers = new Set();
+
+/** Immediately flush any pending debounced loadout / diy / skins syncs (e.g. on closing an in-match editor). */
+export function flushLoadoutSyncs() {
+  for (const fn of activeFlushers) {
+    try { fn(); } catch { /* ignore */ }
+  }
+}
+
 function installPrefSync({ net, timers, target, notify, key, stateKey, msgType, field, prepare, lockedText, tag, content = appContentSet, gate = null, app = store, seatBound = true }) {
   const T = timers || { setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms), clearTimeout: (id) => globalThis.clearTimeout(id) };
   // (`lockedText` is a msgid: the toast is translated when it shows — docs/I18N.md)
@@ -539,10 +609,16 @@ function installPrefSync({ net, timers, target, notify, key, stateKey, msgType, 
     if (c.status === 'ready' || c.status === 'idle') { revision++; if (seatBound) lastSent = null; schedule(50); }
   }) : null;
 
+  const flushPending = tag === 'loadout' || tag === 'diy' || tag === 'skins'
+    ? () => { if (timer != null) { T.clearTimeout(timer); timer = null; void flush(); } }
+    : null;
+  if (flushPending) activeFlushers.add(flushPending);
+
   return {
     flush,
     dispose() {
       disposed = true;
+      if (flushPending) activeFlushers.delete(flushPending);
       T.clearTimeout(timer);
       offWelcome?.();
       offStore?.();

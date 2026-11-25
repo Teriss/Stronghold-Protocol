@@ -22,6 +22,7 @@ import { profIconUrl, subProfIconUrl, bondIconUrl, skillRecordIconUrl, moduleTyp
 import { data } from '../data.js';
 import { MODULE_NONE, PROF_NAME, skillLabel, moduleBadge, quickSkillTags, opsOf, chessOptions } from '../ui/loadoutModel.js';
 import { diySlotList, pickChoices, pickOptions, slotRecord, defaultPick } from '../ui/diyModel.js';
+import { loadoutStore } from '../ui/loadoutSync.js';
 import { OperatorVoice } from '../ui/operatorVoice.js';
 // 皮肤 (docs/SKINS.md): the same self-contained section the 干员调配 detail draws, keyed by the operator being picked
 import { SkinSection } from '../ui/skinPicker.js';
@@ -289,12 +290,25 @@ export function DiyPickerView({ m, slot, picks, kitted, onDone, onClose, filter,
     && (!prof || o.unit?.profession === prof)
     && (!q || [o.unit?.name, o.unit?.appellation, o.unit?.subProfessionName, t(PROF_NAME[o.unit?.profession] || ''), ...o.bonds.map(bondName)].some((x) => typeof x === 'string' && x.toLowerCase().includes(q))));
   const ch = draft ? rowChoices(draft.charId, slot.slotId, D) : null;
+  const initialPickFor = (charId) => {
+    const base = defaultPick(charId, slot.slotId, D);
+    const bc = loadoutStore.get().byChar?.[charId];
+    const rch = bc ? rowChoices(charId, slot.slotId, D) : null;
+    if (!bc || !rch || rch.proto) return base;
+    const out = { ...base };
+    if (Number.isInteger(bc.skill) && rch.skills.some((s) => s.index === bc.skill)) out.skillIndex = bc.skill;
+    if (typeof bc.module === 'string') {
+      if (bc.module === MODULE_NONE) out.uniEquipId = null;
+      else if (rch.modules.some((m) => m.uniEquipId === bc.module)) out.uniEquipId = bc.module;
+    }
+    return out;
+  };
   // Selecting a row keeps the draft's edits when it is already the chosen operator (the picker's own rule, 0.2.0). On a
   // phone the first tap only selects: the detail slides over on the next tap of the row that is already selected, so a
   // tap that means "pick this operator" never replaces the list with a pane the player did not ask for.
   const sel = (charId) => {
     if (draft?.charId !== charId) {
-      setDraft(cur && cur.charId === charId ? { ...cur } : defaultPick(charId, slot.slotId, D));
+      setDraft(cur && cur.charId === charId ? { ...cur } : initialPickFor(charId));
       return;
     }
     onNarrowDetail(true);
@@ -303,7 +317,7 @@ export function DiyPickerView({ m, slot, picks, kitted, onDone, onClose, filter,
   // operator is the slot's own, else from what selecting it would give it (ui/diyModel.js defaultPick)
   const quick = (charId, patch) => {
     const from = draft && draft.charId === charId ? draft
-      : cur && cur.charId === charId ? { ...cur } : defaultPick(charId, slot.slotId, D);
+      : cur && cur.charId === charId ? { ...cur } : initialPickFor(charId);
     setDraft({ ...from, ...patch });
   };
   const lk = ch?.locked || null;

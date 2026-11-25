@@ -30,8 +30,8 @@ export const RULE_SWITCHES = Object.freeze({
     phrase: Object.freeze({ bondBias: N_('商店装备偏向已激活盟约') }),
   }),
   prepLoadout: Object.freeze({
-    options: Object.freeze(['locked', 'prep']),
-    phrase: Object.freeze({ prep: N_('休整期可调整技能与模组') }),
+    options: Object.freeze(['prep', 'locked']),
+    phrase: Object.freeze({ locked: N_('休整期锁定干员调配') }),
   }),
   morphPairing: Object.freeze({
     options: Object.freeze(['official', 'plus']),

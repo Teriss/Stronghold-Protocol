@@ -1855,8 +1855,15 @@ export class Lobby {
     if (!room) return OK;
     const seat = room.seatOf(session.playerId);
     if (seat) { seat.diy = kept; seat.diyCs = cs; }
-    if (room.match && seat) return fail(ERR.ROOM_STARTED, 'stored for the next match');
-    return OK;
+    if (!room.match || !seat) return OK;
+    if (typeof room.match.setDiy !== 'function') return fail(ERR.ROOM_STARTED, 'stored for the next match');
+    let r;
+    try { r = room.match.setDiy(session.playerId, kept); } catch (e) {
+      this.log.error(`[lobby] ${room.code} match.setDiy threw`, e);
+      return fail(ERR.INTERNAL);
+    }
+    if (r && typeof r.then === 'function') return Promise.resolve(r).then(matchAnswer, () => fail(ERR.INTERNAL));
+    return matchAnswer(r);
   }
 
   /**

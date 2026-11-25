@@ -31,7 +31,7 @@ function collector() {
 test('the closed table is the only list of names and options', () => {
   assert.deepEqual(RULE_NAMES, ['shopBias', 'prepLoadout', 'morphPairing', 'unequip']);
   assert.deepEqual(RULE_SWITCHES.shopBias.options, ['official', 'bondBias']);
-  assert.deepEqual(RULE_SWITCHES.prepLoadout.options, ['locked', 'prep']);
+  assert.deepEqual(RULE_SWITCHES.prepLoadout.options, ['prep', 'locked']);
   assert.deepEqual(RULE_SWITCHES.morphPairing.options, ['official', 'plus']);
   assert.deepEqual(RULE_SWITCHES.unequip.options, ['official', 'allow']);
   assert.equal(ruleOption(null, 'unequip'), 'official');
@@ -41,8 +41,8 @@ test('the closed table is the only list of names and options', () => {
   assert.deepEqual(rulePhrases(null), []);
   assert.deepEqual(rulePhrases({ shopBias: 'official', unequip: 'allow' }), ['可以卸下装备']);
   assert.deepEqual(rulePhrases({
-    unequip: 'allow', morphPairing: 'plus', prepLoadout: 'prep', shopBias: 'bondBias',
-  }), ['商店装备偏向已激活盟约', '休整期可调整技能与模组', '变形同构体不占格，仅配对最左盟约装备', '可以卸下装备']);
+    unequip: 'allow', morphPairing: 'plus', prepLoadout: 'locked', shopBias: 'bondBias',
+  }), ['商店装备偏向已激活盟约', '休整期锁定干员调配', '变形同构体不占格，仅配对最左盟约装备', '可以卸下装备']);
 });
 
 test('a bad rules field is PLUGIN_RULES; an empty object is absent', () => {

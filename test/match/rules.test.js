@@ -52,12 +52,11 @@ function wearer(h, itemIds) {
   return p;
 }
 
-test('a room without rules stays the official match', () => {
+test('a room without rules allows prep loadout by default while prepLoadout=locked refuses it and equipment stays locked', (t) => {
   const h = prep();
   assert.equal(h.m.rules, undefined);
   assert.equal(h.m.phase, PHASE.PREP);
-  const r = h.m.setLoadout('p_0', {});
-  assert.equal(r.error, ERR.WRONG_PHASE);
+  ok(h.m.setLoadout('p_0', {}));
   const p = wearer(h, [HAMMER]);
   const item = p.items[0];
   const locked = h.m.handle('p_0', { t: 'g.unequip', itemUid: item.uid });
@@ -65,6 +64,9 @@ test('a room without rules stays the official match', () => {
   assert.equal(locked.detail, 'equipped items are locked');
   assert.equal(p.items[0].uid, item.uid);
   h.m.dispose();
+  const lockedPrep = prep({ prepLoadout: 'locked' }, t);
+  assert.equal(lockedPrep.m.setLoadout('p_0', {}).error, ERR.WRONG_PHASE);
+  lockedPrep.m.dispose();
 });
 
 test('shopBias bondBias draws the active bond when that tier has one, and matches official when none is active', (t) => {
@@ -336,4 +338,49 @@ test('unequip allow returns the item to the hand, then the visible temp row, and
   const bot = readFileSync(path.join(ROOT, 'server/match/bot.js'), 'utf8');
   assert.equal(bot.includes('g.unequip'), false);
   h.m.dispose();
+});
+
+test('prep DIY loadout updates skill/module of slotted owned operators, refuses roster swaps and locked/ready states', (t) => {
+  const slotId = Object.keys(DATA.chess).find((id) => DATA.chess[id]?.isDiy && !DATA.chess[id]?.isGolden && DATA.chess[id]?.tier === 6);
+  assert.ok(slotId, 'a tier-6 DIY slot exists');
+  const KALTS = 'char_003_kalts';
+  const h = makeMatch({
+    mode: 'solo',
+    humans: 1,
+    seed: 19,
+    fake: true,
+    seats: [{ playerId: 'p_0', name: 'P0', diy: { [slotId]: { charId: KALTS, skillIndex: 2, uniEquipId: null } } }],
+  }).start();
+  t.after(() => h.m.dispose());
+  h.toPrep(1);
+  const ps = h.ps('p_0');
+  assert.equal(ps.diy[slotId]?.charId, KALTS);
+  assert.equal(ps.diy[slotId]?.skillIndex, 2);
+
+  // Deploy elite Kal'tsit so her Mon3tr summon is granted and battleInput exposes skillIndex.
+  const eliteId = DATA.chess[slotId].goldenId;
+  const owner = give(h.m, ps, eliteId, 'board', legalTileFor(h.m, ps, eliteId));
+  assert.ok(tokensOf(ps, owner).length > 0, 'Kaltsit grants Mon3tr summon');
+
+  // Switch Kal'tsit from S3 -> S2 during PREP: accepted immediately!
+  ok(h.m.setDiy('p_0', { [slotId]: { charId: KALTS, skillIndex: 1, uniEquipId: null } }));
+  assert.equal(ps.diy[slotId].skillIndex, 1);
+  assert.equal(ps.loadoutFor(ps.gd.chess(eliteId)).skillIndex, 1);
+  assert.equal(ps.battleInput().units.find((u) => u.uid === owner.uid)?.diy?.skillIndex, 1);
+  h.invariants();
+
+  // Swapping to another operator or removing a slot is refused (ROOM_STARTED) and leaves ps.diy untouched.
+  const swapRes = h.m.setDiy('p_0', {});
+  assert.equal(swapRes.error, ERR.ROOM_STARTED);
+  assert.equal(ps.diy[slotId]?.skillIndex, 1);
+
+  // Ready seat refuses DIY edits.
+  ps.ready = true;
+  assert.equal(h.m.setDiy('p_0', { [slotId]: { charId: KALTS, skillIndex: 0, uniEquipId: null } }).error, ERR.ROOM_STARTED);
+  assert.equal(ps.diy[slotId]?.skillIndex, 1);
+
+  // Explicit prepLoadout=locked refuses DIY edits too.
+  const locked = prep({ prepLoadout: 'locked' }, t);
+  assert.equal(locked.m.setDiy('p_0', {}).error, ERR.ROOM_STARTED);
+  locked.m.dispose();
 });

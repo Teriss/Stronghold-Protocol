@@ -195,6 +195,56 @@ export class PlayerDiy {
   }
 
   /**
+   * Update only skill / module of already-slotted non-prototype DIY operators during PREP (prepLoadout=prep).
+   * Adding/removing a slot or changing a slot's operator stays out-of-match (`changedRoster: true`).
+   * @param {any} picks
+   * @param {{ kitted?: Iterable<string> }} [opts]
+   * @returns {{ ok: boolean, changedSlots?: string[], changedRoster?: boolean }}
+   */
+  updateDiyLoadout(picks, { kitted = KITTED_CHARS } = {}) {
+    if (this.isBot) return { ok: false };
+    const gd = this.m.gd;
+    const data = gd.raw;
+    const res = checkDiyPicks(picks, { data, kitted });
+    if (!res || !('ok' in res)) return { ok: false };
+    const cur = this.diy || {};
+    const curKeys = Object.keys(cur);
+    const nextKeys = Object.keys(res.picks);
+    if (curKeys.length !== nextKeys.length) return { ok: false, changedRoster: true };
+    for (const slotId of curKeys) {
+      const nextPick = res.picks[slotId];
+      if (!nextPick || nextPick.charId !== cur[slotId]?.charId) return { ok: false, changedRoster: true };
+    }
+    const kept = {};
+    const records = new Map();
+    const changedSlots = [];
+    for (const slotId of curKeys) {
+      const prev = cur[slotId];
+      const nextPick = res.picks[slotId];
+      const slot = diySlot(slotId, data);
+      if (!slot) continue;
+      const changed = prev.skillIndex !== nextPick.skillIndex || (prev.uniEquipId ?? null) !== (nextPick.uniEquipId ?? null);
+      if (changed && isPrototypePick(data, slot.tier, prev.charId)) return { ok: false };
+      let normal;
+      let golden;
+      try {
+        normal = diyRecord(slotId, nextPick, { elite: false, data });
+        golden = diyRecord(slotId, nextPick, { elite: true, data });
+      } catch { normal = null; golden = null; }
+      if (!normal || !golden) return { ok: false };
+      records.set(slot.baseId, Object.freeze(normal));
+      records.set(slot.goldenId, Object.freeze(golden));
+      kept[slot.baseId] = Object.freeze({ charId: nextPick.charId, skillIndex: nextPick.skillIndex, uniEquipId: nextPick.uniEquipId ?? null });
+      if (changed) changedSlots.push(slot.baseId);
+    }
+    if (!changedSlots.length) return { ok: true, changedSlots };
+    this.diy = Object.freeze(kept);
+    this._diyRecords = records;
+    this.gd = records.size ? diyGameData(gd, records) : gd;
+    return { ok: true, changedSlots };
+  }
+
+  /**
    * The stock of each slotted DIY piece (see the header), once the match has drawn its bans: `off` = the bonds switched
    * off this match (drawn + the mode's static list). GameData.bondsExclude applies the version's rule (`diyBanned`).
    * @param {Set<string>} off

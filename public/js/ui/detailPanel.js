@@ -421,7 +421,7 @@ function ItemProgress({ progress }) {
   return label ? html`<p class="ditem__progress">${t('出售干员')} <strong>${label}</strong></p>` : null;
 }
 
-export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, offBonds = null, loadout, onBond, live = null, hint = null, unitItems = null, unitItemProgress = null, standIn = null, diy = null, cultOpts = null, morphMode = 'official', onUnequip = null, ownerId, skin = null }) {
+export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, offBonds = null, loadout, onBond, live = null, hint = null, unitItems = null, unitItemProgress = null, standIn = null, diy = null, cultOpts = null, morphMode = 'official', onUnequip = null, onConfigure = null, configured = false, ownerId, skin = null }) {
   const m = data.get('assets');
   const hp = hpOf(live, snapHp);
   // 0.2.0 自选编队: `chess` is then the composed 自选 record (the operator, the slot's tier / price); its skill and module are
@@ -529,6 +529,14 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
   const out = CHESS_SECTIONS.map((k) => blocks[k]).filter(Boolean);
   // a merge-completing shop / reward card: where the elite goes (shopBar mergeHint), right under the header
   if (hint) out.splice(1, 0, html`<p key="merge" class="dhint dhint--merge"><${Icon} name="info" />${t('可晋升：{hint}', { hint })}</p>`);
+  if (onConfigure) {
+    out.splice(1, 0, html`<div key="configure" class="dconfig">
+      <${Button} variant="secondary" size="sm" icon="edit" class="dconfig__btn" data-testid="test-scene-configure" onClick=${() => onConfigure(piece || c)}>
+        ${t('干员调配')}
+      <//>
+      ${configured ? html`<span class="dtag-loadout">${t('已调整')}</span>` : null}
+    </div>`);
+  }
   return out;
 }
 
@@ -807,10 +815,11 @@ export function resolveDetail(target, pieces, { priv = null, backups = data.get(
     if (p.kind === 'item') { const it = data.lookup('items', p.id); return it ? { type: 'item', item: it, piece: p } : null; }
     if (p.kind === 'token') { const t = data.lookup('tokens', p.id) || diyToken(p.id); return t ? { type: 'token', token: t, piece: p, ownerId: tokenOwnerId(p, pieces), skin: p.skin || null } : null; }
     const c = data.lookup('chess', p.id);
+    const pieceSkin = typeof p.skin === 'string' && p.skin ? p.skin : appearance.skin;
     const pieceDiy = p.diy && c?.isDiy ? diyRecordFor(c, p.diy, dd) : null;
     const d = pieceDiy ? { chess: pieceDiy, diy: p.diy } : ownDiy(c);
-    if (d) return { type: 'chess', ...appearance, chess: d.chess, piece: p, standIn: null, diy: d.diy };
-    return c ? { type: 'chess', ...appearance, chess: c, piece: p, standIn: ownSi(c) } : null;
+    if (d) return { type: 'chess', ...appearance, skin: pieceSkin, chess: d.chess, piece: p, standIn: null, diy: d.diy };
+    return c ? { type: 'chess', ...appearance, skin: pieceSkin, chess: c, piece: p, standIn: ownSi(c) } : null;
   }
   if (target.kind === 'chess') {
     // a bond popup's 变形同构体 row hands the wearer's item ids on (bondStrip onMember): the card shows the pair and the chip
@@ -893,7 +902,7 @@ export function selectVoiceKey(detail) {
  *   (the owner's request of 2026-10-08 「添加一下干员点击上去的语气一样的语音」 lifted 2026-10-03's 「整备阶段不需要干员语音」
  *   for this line only; [ASSUMED] the official prep tap says 选中干员 like the battle's FOCUS_CHAR)
  */
-export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], offBonds = null, loadout = null, ops = null, onBond = null, side = 'left', shopOpen = false, live = null, bondTimers = null, voice = false, morphMode = 'official', onUnequip = null, unequipAllowed = false }) {
+export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], offBonds = null, loadout = null, ops = null, onBond = null, side = 'left', shopOpen = false, live = null, bondTimers = null, voice = false, morphMode = 'official', onUnequip = null, unequipAllowed = false, onConfigure = null, configured = false }) {
   const getter = typeof live === 'function' ? live : null;
   useTicker(detail && (getter || bondTimers) ? 250 : 0);
   // 选中干员 voice (audio.voice 'select'): once per opened operator — the panel stays mounted while the target changes,
@@ -928,7 +937,7 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
       ${bondTimers ? html`<${BondTimers} rows=${bondTimers()} />` : null}
       ${detail.type === 'chess' ? html`<${ChessDetail} chess=${detail.chess} ownerId=${detail.ownerId} skin=${detail.skin} piece=${detail.piece} snapHp=${snapHp} editable=${editable} onSell=${sellIt}
         bonds=${bonds} offBonds=${offBonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} unitItems=${detail.unitItems || null} unitItemProgress=${detail.unitItemProgress || null}
-        standIn=${detail.standIn || null} diy=${detail.diy || null} cultOpts=${detail.cultOpts || { ops }} morphMode=${morphMode} onUnequip=${onUnequip} />` : null}
+        standIn=${detail.standIn || null} diy=${detail.diy || null} cultOpts=${detail.cultOpts || { ops }} morphMode=${morphMode} onUnequip=${onUnequip} onConfigure=${onConfigure} configured=${configured} />` : null}
       ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} progress=${detail.progress || detail.piece?.progress} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} offBonds=${offBonds} morphMode=${morphMode} unequipAllowed=${unequipAllowed} />` : null}
       ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
       ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} ownerId=${detail.ownerId ?? null} skin=${detail.skin ?? null} snapHp=${snapHp} live=${liveNow} />` : null}

@@ -171,7 +171,7 @@ for (const hook of ['income', 'refresh']) test(`review: bond ${hook} default and
 });
 
 test('review: rules trial exercises four real actions and passes equipment/loadout/morph into replay', async t => {
-  const f = setup(t, 'rules', { rules: { shopBias: 'bondBias', prepLoadout: 'prep', morphPairing: 'plus', unequip: 'allow' } });
+  const f = setup(t, 'rules', { rules: { shopBias: 'bondBias', prepLoadout: 'locked', morphPairing: 'plus', unequip: 'allow' } });
   f.registry.rescan(); const r = await f.bench.run({ id: f.id, seconds: 2 });
   assert.equal(r.ok, true, JSON.stringify(r.issues));
   assert.equal(r.plugin.spec.morphPairing, 'plus');
@@ -181,9 +181,9 @@ test('review: rules trial exercises four real actions and passes equipment/loado
   assert.equal(checks.shopBias.active, true, JSON.stringify(checks.shopBias));
   assert.notDeepEqual(checks.shopBias.draws, base.shopBias.draws);
   assert.ok(checks.shopBias.outcomes.every(x => x.ok));
-  assert.equal(checks.prepLoadout.result.ok, true, JSON.stringify(checks.prepLoadout)); assert.ok(base.prepLoadout.result.error);
+  assert.ok(checks.prepLoadout.result.error, JSON.stringify(checks.prepLoadout)); assert.equal(base.prepLoadout.result.ok, true);
   assert.equal(checks.unequip.result.ok, true, JSON.stringify(checks.unequip)); assert.equal(checks.unequip.returned, true); assert.ok(base.unequip.result.error);
   assert.equal(checks.morphPairing.items.length, 3); assert.equal(base.morphPairing.items.length, 2);
   assert.deepEqual(r.plugin.spec.players[0].units[0].items, checks.morphPairing.items);
-  assert.equal(r.plugin.spec.players[0].units[0].skillIndex, 0);
+  assert.equal(r.plugin.spec.players[0].units[0].skillIndex, 1);
 });

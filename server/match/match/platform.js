@@ -172,6 +172,39 @@ export class MatchPlatform {
   }
 
   /**
+   * room.diy during the match: during PREP under prepLoadout=prep (before 准备), skill / module edits to
+   * already-slotted owned DIY operators apply immediately and reconcile their summons. Roster slot changes stay
+   * out-of-match (ROOM_STARTED, stored for the next match).
+   * @param {string} playerId
+   * @param {Record<string, { charId: string, skillIndex: number, uniEquipId: string|null }>} picks
+   * @returns {{ ok: true } | { error: string, detail?: string }}
+   */
+  setDiy(playerId, picks) {
+    const ps = this.players.get(playerId);
+    if (!ps || ps.isBot || ps.left) return fail(ERR.NOT_IN_ROOM);
+    const prep = this.phase === PHASE.PREP && ruleOption(this.rules, 'prepLoadout') === 'prep';
+    if (this.disposed || this.ended || !prep || ps.ready) return fail(ERR.ROOM_STARTED, 'stored for the next match');
+    let res = OK;
+    this.guard(() => {
+      const owners = ps.allChess();
+      const r = ps.updateDiyLoadout(picks, { kitted: this.diyKitted });
+      if (!r.ok) {
+        res = r.changedRoster ? fail(ERR.ROOM_STARTED, 'stored for the next match') : fail(ERR.BAD_TARGET, 'invalid diy loadout');
+        return;
+      }
+      if (r.changedSlots.length) {
+        const changed = new Set(r.changedSlots);
+        for (const owner of owners) {
+          const baseId = this.gd.chess(owner.id)?.baseId || owner.id;
+          if (changed.has(baseId)) ps._reconcileTokensFor(owner);
+        }
+        ps.recompute();
+      }
+    });
+    return res;
+  }
+
+  /**
    * room.skins during the match (docs/SKINS.md): accepted in ANY phase, unlike the loadout just above. The loadout is
    * locked at INFO_CHECK because it changes what a unit does; a skin changes only what it looks like, and it is public —
    * a teammate picking a different model mid-match is harmless, so `markPublic` carries it to everyone on the next
