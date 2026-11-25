@@ -23,6 +23,7 @@ import theme from './theme.js';
 import notices from './notices.js';
 import fx from './fx.js';
 import skins from './skins.js';
+import emotes from './emotes.js';
 
 /**
  * @typedef {{ id: string, Component?: Function, previews?: (target: any) => string[], accept?: (slot: any) => string, multiple?: (slot: any) => boolean,
@@ -31,7 +32,7 @@ import skins from './skins.js';
  */
 
 /** @type {Record<string, StudioEditor>} */
-export const EDITORS = Object.freeze({ art, spine, voice, audio, numbers, operator, dsl, meta, mode, ui, script, bond, item, trait, offers, rules, theme, notices, fx, skins });
+export const EDITORS = Object.freeze({ art, spine, voice, audio, numbers, operator, dsl, meta, mode, ui, script, bond, item, trait, offers, rules, theme, notices, fx, skins, emotes });
 
 /** The editor of a template (a generic one for a template the page does not know). @param {string} id */
 export function editorOf(id) {

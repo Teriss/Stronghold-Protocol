@@ -76,6 +76,7 @@
 // Cosmetics never change a battle.
 
 import { sha256Hex } from '../sha256.js';
+import { CUSTOM_EMOTE_KEY_RE, CUSTOM_EMOTE_SLOTS_PER_PACK, CUSTOM_EMOTE_MAX, makeCustomEmoteId } from '../constants.js';
 import { canonicalJson, isContentHash } from './identity.js';
 import { isPackPath, extOf, PLUGIN_IMAGE_EXTS, PLUGIN_AUDIO_EXTS } from './manifest.js';
 import { issueList } from './errors.js';
@@ -153,6 +154,21 @@ const SKIN_RECORD = { fields: { name: 'text', group: 'text', avatar: 'image', av
   portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } } } };
 const SFX_UNIT = { fields: { attack: 'audio', hit: 'audio', skill: 'audio', die: 'audio', born: 'audio',
   skills: { each: 'audio', key: INDEX }, attacks: { each: 'audio', key: INDEX }, hits: { each: 'audio', key: INDEX } } };
+/** One custom emote slot: optional aria-label + picture. [ASSUMED] */
+const EMOTE_SLOT_RECORD = { fields: { label: 'text', image: 'image' } };
+/** One custom emote pack page: display name + up to 6 slots (3×2 wheel grid). [ASSUMED] */
+const EMOTE_PACK_RECORD = {
+  fields: {
+    name: 'text',
+    slots: {
+      each: EMOTE_SLOT_RECORD,
+      key: CUSTOM_EMOTE_KEY_RE,
+      max: CUSTOM_EMOTE_SLOTS_PER_PACK,
+      keyName: 'emote slot key (lowercase letters, digits, _ -, at most 32 characters)',
+      keyProblem: true,
+    },
+  },
+};
 
 /** @type {readonly AssetContainer[]} the record containers a cosmetic plugin writes (see the header) */
 export const ASSET_CONTAINERS = Object.freeze(/** @type {AssetContainer[]} */ ([
@@ -160,6 +176,7 @@ export const ASSET_CONTAINERS = Object.freeze(/** @type {AssetContainer[]} */ ([
       spine: { fields: { front: 'spine', back: 'spine' } }, skins: { each: SKIN_RECORD, key: SKIN_KEY, max: SKINS_MAX, keyName: 'key (letters, digits, _ @ # + . -, at most 64 characters)', keyProblem: true } } } },
   { path: ['enemies'], record: { fields: { icon: 'image', spine: 'spine' } } },
   { path: ['tokens'], record: { fields: { avatar: 'image', spine: 'spine', skins: { each: SKIN_RECORD, key: SKIN_KEY, max: SKINS_MAX, keyName: 'key (letters, digits, _ @ # + . -, at most 64 characters)', keyProblem: true } } } },
+  { path: ['emotes'], record: EMOTE_PACK_RECORD, keyPattern: CUSTOM_EMOTE_KEY_RE },
   ...['bonds', 'items', 'bands', 'skills', 'modules', 'ui'].map((k) => ({ path: [k], record: 'image' })),
   ...['icon', 'large', 'battlecard', 'sub'].map((k) => ({ path: ['prof', k], record: 'image' })),
   // audio.bgm: the tracks by name — not combatAlts, a list of tracks the client reads by round
@@ -298,7 +315,8 @@ export function readAssetOverlay(assets, { vanilla = null, permissions = null, h
       // a line of the manifest (a skin's name or series): never a reference, never anything but a short text.
       // A skin's series may be empty (an outfit a plugin itself adds may have no series; every operator skin of the
       // official table has one); its name may not.
-      const min = loc.field[loc.field.length - 1] === 'group' ? 0 : 1;
+      const lastField = loc.field[loc.field.length - 1];
+      const min = lastField === 'group' || lastField === 'label' ? 0 : 1;
       const n = typeof v === 'string' ? [...v].length : -1;
       if (n < min || n > TEXT_MAX) {
         list.problem('PLUGIN_ASSETS_SHAPE', `${pathText(at)}: not a text of ${min}–${TEXT_MAX} characters`, { at: where(at) });
@@ -398,7 +416,8 @@ export function readAssetOverlay(assets, { vanilla = null, permissions = null, h
       const c = /** @type {AssetContainer | undefined} */ (next.$container);
       if (!c) { walk(next, x, at); continue; }
       for (const [key, v] of Object.entries(x)) {
-        if (!isAssetKey(key)) { list.problem('PLUGIN_ASSET_KEY', `${pathText(at)}: ${short(key)} is not an entry key (letters, digits, _ . / -)`, { at: where([...at, String(key)]), where: String(key) }); continue; }
+        const validKey = c.keyPattern ? (typeof key === 'string' && c.keyPattern.test(key) && !FORBIDDEN.has(key)) : isAssetKey(key);
+        if (!validKey) { list.problem('PLUGIN_ASSET_KEY', `${pathText(at)}: ${short(key)} is not an entry key (${c.keyPattern ? 'lowercase letters, digits, _ -, at most 32 characters' : 'letters, digits, _ . / -'})`, { at: where([...at, String(key)]), where: String(key) }); continue; }
         if (c.keys && !c.keys.includes(key)) { list.warning('PLUGIN_ASSET_IGNORED', `${pathText([...at, key])} is not one of ${c.keys.join(', ')} (ignored)`, { at: where([...at, key]) }); continue; }
         readValue(c.record, v, { container: c.path, key, field: [] });
       }
@@ -616,7 +635,8 @@ export function locateAssetPath(at) {
     const c = /** @type {AssetContainer | undefined} */ (node.$container);
     if (!c) continue;
     const key = at[i + 1];
-    if (!isAssetKey(key) || (c.keys && !c.keys.includes(key))) return null;
+    const validKey = c.keyPattern ? (typeof key === 'string' && c.keyPattern.test(key) && !FORBIDDEN.has(key)) : isAssetKey(key);
+    if (!validKey || (c.keys && !c.keys.includes(key))) return null;
     const field = at.slice(i + 2);
     /** @type {any} */
     let kind = c.record;
@@ -724,7 +744,8 @@ export function prepareVisualDoc(doc) {
       if (op.text !== undefined) {
         // a line of the manifest (a skin's name or series): written as it is, no URL of the set.
         // An empty series is written too (an outfit a plugin adds may have none).
-        const emptyOk = at[at.length - 1] === 'group';
+        const lastKey = at[at.length - 1];
+        const emptyOk = lastKey === 'group' || lastKey === 'label';
         const value = kind === 'text' && typeof op.text === 'string'
           && (op.text.length > 0 || emptyOk) && [...op.text].length <= TEXT_MAX ? op.text : null;
         if (value !== null) ops.push({ at: [...at], value, urls: [] }); else drop(at, 'not a text of the set');
@@ -992,4 +1013,26 @@ export function checkVisualDoc(doc, vs) {
   }
   if (writes.size) return 'it has writes of a plugin its composition does not name';
   return null;
+}
+
+/**
+ * Extract valid custom emote wire ids (`custom:<packKey>:<slotKey>`) from merged visual ops.
+ * Only slots that write an image file count as sendable emotes; capped at CUSTOM_EMOTE_MAX. [ASSUMED]
+ * @param {AssetOp[]} ops
+ * @returns {string[]}
+ */
+export function customEmoteIdsFromOps(ops) {
+  /** @type {string[]} */
+  const ids = [];
+  const seen = new Set();
+  for (const op of Array.isArray(ops) ? ops : []) {
+    const at = op?.at;
+    if (!Array.isArray(at) || at.length !== 5 || at[0] !== 'emotes' || at[2] !== 'slots' || at[4] !== 'image' || !op.file) continue;
+    const id = makeCustomEmoteId(at[1], at[3]);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= CUSTOM_EMOTE_MAX) break;
+  }
+  return ids;
 }

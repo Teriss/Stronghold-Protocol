@@ -94,6 +94,16 @@
         "$ref": "#/$defs/image"
       }
     },
+    "emotes": {
+      "description": "Custom emote packs added as extra pages in the in-match emote wheel (up to 6 slots per pack).",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/emoteKey"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/emotePackRecord"
+      }
+    },
     "prof": {
       "type": "object",
       "description": "Profession icons.",
@@ -831,6 +841,48 @@
         },
         "hits": {
           "$ref": "#/$defs/indexedSounds"
+        }
+      },
+      "additionalProperties": false
+    },
+    "emoteKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$"
+    },
+    "emoteSlotRecord": {
+      "description": "One custom emote slot: optional aria-label and image.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        }
+      },
+      "additionalProperties": false
+    },
+    "emotePackRecord": {
+      "description": "One custom emote pack page: display name and up to 6 slots.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "slots": {
+          "type": "object",
+          "maxProperties": 6,
+          "propertyNames": {
+            "$ref": "#/$defs/emoteKey"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/emoteSlotRecord"
+          }
         }
       },
       "additionalProperties": false

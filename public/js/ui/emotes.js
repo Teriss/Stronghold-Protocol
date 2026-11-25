@@ -20,7 +20,10 @@
 // Styles: public/css/emotes.css (injected on first use when the page does not link it).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { EMOTE_THEMES, EMOTE_COOLDOWN_MS, EMOTE_BUBBLE_MS, emoteInfo, emoteArtGroup } from '../../../shared/constants.js';
+import {
+  EMOTE_THEMES, EMOTE_COOLDOWN_MS, EMOTE_BUBBLE_MS, CUSTOM_EMOTE_SLOTS_PER_PACK,
+  emoteInfo, emoteArtGroup, isEmoteKey, makeCustomEmoteId, parseCustomEmoteId,
+} from '../../../shared/constants.js';
 import { html } from './components.js';
 import { GIcon } from './gameComponents.js';
 import { data, useData, localAsset, artUrls, nextArtUrl } from '../data.js';
@@ -52,19 +55,73 @@ export function ensureEmoteCss(doc = globalThis.document) {
 }
 
 /**
- * URLs of an emote's official art, best first: the local-client picture, then the mirror copy (data.js artUrls). Empty
- * when the id is unknown or neither manifest lists the picture (a path that is not listed is never requested).
- * @param {string} id official emoji id
- * @returns {string[]}
+ * Custom emote pages provided by active cosmetic plugins (`assets.emotes`).
+ * Each pack with at least one imaged slot becomes an extra wheel page (up to 6 slots per page).
+ * @param {any} [assets]
  */
-export function emoteArtUrls(id) {
-  const e = emoteInfo(id);
-  return e ? artUrls(emoteArtGroup(id), e.picId) : [];
+export function customEmoteThemes(assets = data.get('assets')) {
+  const packs = assets?.emotes;
+  if (!packs || typeof packs !== 'object' || Array.isArray(packs)) return [];
+  const out = [];
+  for (const [packKey, pack] of Object.entries(packs)) {
+    if (!isEmoteKey(packKey) || !pack || typeof pack !== 'object' || Array.isArray(pack)) continue;
+    const rawSlots = pack.slots;
+    if (!rawSlots || typeof rawSlots !== 'object' || Array.isArray(rawSlots)) continue;
+    const themeId = `custom:${packKey}`;
+    const emotes = [];
+    for (const [slotKey, slot] of Object.entries(rawSlots)) {
+      if (emotes.length >= CUSTOM_EMOTE_SLOTS_PER_PACK) break;
+      if (!isEmoteKey(slotKey) || !slot || typeof slot !== 'object' || typeof slot.image !== 'string' || !slot.image) continue;
+      const id = makeCustomEmoteId(packKey, slotKey);
+      if (!id) continue;
+      const { label: rawLabel, image } = slot;
+      const ariaText = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : slotKey;
+      emotes.push({ id, themeId, label: ariaText, art: image, custom: true });
+    }
+    if (!emotes.length) continue;
+    const name = typeof pack.name === 'string' && pack.name.trim() ? pack.name.trim() : packKey;
+    out.push({ themeId, dir: null, name, custom: true, emotes });
+  }
+  return out;
+}
+
+/** All emote wheel pages: the 6 official themes followed by any active custom emote packs. */
+export function allEmoteThemes(assets = data.get('assets')) {
+  const extra = customEmoteThemes(assets);
+  return extra.length ? [...EMOTE_THEMES, ...extra] : EMOTE_THEMES;
+}
+
+/** Resolve either an official emote or an active custom emote record by wire id, or null. */
+export function resolveEmoteInfo(id, assets = data.get('assets')) {
+  const official = emoteInfo(id);
+  if (official) return official;
+  const parsed = parseCustomEmoteId(id);
+  if (!parsed) return null;
+  const pack = assets?.emotes?.[parsed.packKey];
+  const slot = pack?.slots?.[parsed.slotKey];
+  if (!slot || typeof slot.image !== 'string' || !slot.image) return null;
+  const { label: rawLabel, image } = slot;
+  const ariaText = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : parsed.slotKey;
+  return { id, themeId: `custom:${parsed.packKey}`, label: ariaText, art: image, custom: true };
 }
 
 /**
- * URL of an emote's official art (the first of emoteArtUrls), or null.
- * @param {string} id official emoji id
+ * URLs of an emote's art, best first: for official emotes the local-client picture then the mirror copy (data.js
+ * artUrls); for custom emotes the cosmetic plugin URL. Empty when unknown or unavailable.
+ * @param {string} id official or custom emoji id
+ * @param {any} [assets]
+ * @returns {string[]}
+ */
+export function emoteArtUrls(id, assets = data.get('assets')) {
+  const e = emoteInfo(id);
+  if (e) return artUrls(emoteArtGroup(id), e.picId);
+  const custom = resolveEmoteInfo(id, assets);
+  return custom?.art ? [custom.art] : [];
+}
+
+/**
+ * URL of an emote's art (the first of emoteArtUrls), or null.
+ * @param {string} id official or custom emoji id
  */
 export function emoteArtUrl(id) {
   return emoteArtUrls(id)[0] || null;
@@ -77,24 +134,24 @@ const artManifestsPending = () => ['local', 'assets'].some((n) => { const st = d
 export const emoteUiSprite = (name) => localAsset('ui/battle', name);
 
 /** Index of a theme in the wheel (0 when unknown). */
-export function themeIndex(themeId) {
-  const i = EMOTE_THEMES.findIndex((t) => t.themeId === themeId);
+export function themeIndex(themeId, themes = allEmoteThemes()) {
+  const i = themes.findIndex((th) => th.themeId === themeId);
   return i < 0 ? 0 : i;
 }
 
 /** Wheel page to open on: the theme of the last emote sent (remembered in localStorage), else the first. */
-export function lastThemeIndex() {
+export function lastThemeIndex(themes = allEmoteThemes()) {
   const v = loadPref(PREF_THEME, null);
-  return typeof v === 'string' ? themeIndex(v) : 0;
+  return typeof v === 'string' ? themeIndex(v, themes) : 0;
 }
 
 /** Remember the theme of a sent emote. */
-export function rememberTheme(themeId) {
-  if (EMOTE_THEMES.some((t) => t.themeId === themeId)) savePref(PREF_THEME, themeId);
+export function rememberTheme(themeId, themes = allEmoteThemes()) {
+  if (themes.some((th) => th.themeId === themeId)) savePref(PREF_THEME, themeId);
 }
 
 /** Clamp a page index into the wheel. */
-export const clampPage = (i) => Math.max(0, Math.min(EMOTE_THEMES.length - 1, Math.trunc(Number(i)) || 0));
+export const clampPage = (i, themes = allEmoteThemes()) => Math.max(0, Math.min(themes.length - 1, Math.trunc(Number(i)) || 0));
 
 /**
  * Page change for a finished horizontal drag / swipe: -1 (previous), +1 (next) or 0.
@@ -177,7 +234,7 @@ export function EmoteArt({ id, class: cls }) {
     return html`<img key=${src} class=${cx('eart', cls)} src=${src} alt="" draggable=${false} decoding="async"
       onError=${() => setBad((s) => new Set(s).add(src))} />`;
   }
-  if (emoteInfo(id) && artManifestsPending()) return html`<span class=${cx('eart', 'eart--pending', cls)} aria-hidden="true"></span>`;
+  if (resolveEmoteInfo(id) && artManifestsPending()) return html`<span class=${cx('eart', 'eart--pending', cls)} aria-hidden="true"></span>`;
   return html`<${EmoteGlyph} class=${cls} />`;
 }
 
@@ -189,12 +246,12 @@ export function EmoteArt({ id, class: cls }) {
  *   instead of restarting it.
  */
 export function EmoteBubble({ id, class: cls, ttl = EMOTE_BUBBLE_MS, at }) {
-  useData('local');
+  useData('local', 'assets');
   useEffect(() => { ensureEmoteCss(); }, []);
   const life = Math.max(300, Number(ttl) || EMOTE_BUBBLE_MS);
   const [age] = useState(() => bubbleAge(at, Date.now(), life)); // fixed at mount: the CSS animation runs from there
   const bg = emoteUiSprite('emoji_bubble_bkg');
-  const e = emoteInfo(id);
+  const e = resolveEmoteInfo(id);
   const style = [`--ebubble-ttl:${life}ms`, age && `--ebubble-age:${Math.round(age)}ms`, bg && `--ebubble-bg:url("${bg}")`].filter(Boolean).join(';');
   return html`<div class=${cx('ebubble', bg && 'has-sprite', cls)} style=${style} role="img"
     aria-label=${e ? t(e.label) : t('表情')} data-emote=${e ? e.id : ''}>
@@ -209,9 +266,10 @@ export function EmoteBubble({ id, class: cls, ttl = EMOTE_BUBBLE_MS, at }) {
  *   chatOnly?: boolean, unread?: number }} props
  */
 export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownMs = EMOTE_COOLDOWN_MS, chat = null, chatOpen = false, onTab = null, chatOnly = false, unread = 0 }) {
-  useData('local');
+  useData('local', 'assets');
   useEffect(() => { ensureEmoteCss(); }, []);
-  const [page, setPage] = useState(lastThemeIndex);
+  const themes = allEmoteThemes();
+  const [page, setPage] = useState(() => lastThemeIndex(themes));
   const [dir, setDir] = useState(0);          // direction of the last page change (slide-in animation)
   const [dx, setDx] = useState(0);            // live drag offset (px)
   const [cooling, setCooling] = useState(() => cooldownLeft(lastSentAt, Date.now(), cooldownMs) > 0);
@@ -219,10 +277,10 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
   const swallowClick = useRef(false);
   const wheelAcc = useRef({ x: 0, t: -Infinity, spent: false });
   const live = useRef({});
-  live.current = { page, onToggle };
+  live.current = { page, onToggle, themes };
 
   const go = (to) => {
-    const next = clampPage(to);
+    const next = clampPage(to, live.current.themes);
     if (next === live.current.page) return;
     setDir(next > live.current.page ? 1 : -1);
     setPage(next);
@@ -230,7 +288,7 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
   };
 
   // reopen on the last used theme
-  useEffect(() => { if (open) { setPage(lastThemeIndex()); setDir(0); setDx(0); } }, [open]);
+  useEffect(() => { if (open) { setPage(lastThemeIndex(live.current.themes)); setDir(0); setDx(0); } }, [open]);
 
   // cooldown: the button is greyed for chatCD after a send (from the send time, so a remounted wheel keeps it)
   useEffect(() => {
@@ -260,11 +318,11 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
 
   const send = (id) => {
     if (swallowClick.current) { swallowClick.current = false; return; }
-    const e = emoteInfo(id);
+    const e = resolveEmoteInfo(id);
     const now = Date.now();
     if (!e || cooling || disabled || cooldownLeft(lastSentAt, now, cooldownMs) > 0) return;
     lastSentAt = now;
-    rememberTheme(e.themeId);
+    rememberTheme(e.themeId, live.current.themes);
     setCooling(true);
     onSend(id);
     onToggle(false);
@@ -283,7 +341,7 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
     const off = e.clientX - d.x0;
     if (!d.moved && Math.abs(off) < DRAG_SLOP_PX) return;
     if (!d.moved) { d.moved = true; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ } }
-    const edge = (off > 0 && live.current.page === 0) || (off < 0 && live.current.page === EMOTE_THEMES.length - 1);
+    const edge = (off > 0 && live.current.page === 0) || (off < 0 && live.current.page === live.current.themes.length - 1);
     setDx(edge ? off / 3 : off); // rubber band at the first / last page
   };
   const endDrag = (e, cancelled) => {
@@ -304,7 +362,8 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
     if (step) go(live.current.page + step);
   };
 
-  const theme = EMOTE_THEMES[clampPage(page)];
+  const safePage = clampPage(page, themes);
+  const theme = themes[safePage];
   const btnSprite = emoteUiSprite(disabled || cooling ? 'emoji_btn_disable' : 'emoji_btn');
   const panelBg = emoteUiSprite('emoji_bkg');
   const cellBg = emoteUiSprite('emoji_cell_bkg');
@@ -324,18 +383,18 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
       ${chatOpen ? chat : html`<div class="ewheel__viewport" onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
         onPointerUp=${(e) => endDrag(e, false)} onPointerCancel=${(e) => endDrag(e, true)} onWheel=${onWheel}>
         <div key=${theme.themeId} class=${cx('ewheel__page', dir > 0 && 'is-from-right', dir < 0 && 'is-from-left', dx !== 0 && 'is-dragging')}
-          style=${dx ? `transform:translateX(${dx}px)` : ''} role="group" aria-label=${t(theme.name)} data-theme=${theme.themeId}>
+          style=${dx ? `transform:translateX(${dx}px)` : ''} role="group" aria-label=${theme.custom ? theme.name : t(theme.name)} data-theme=${theme.themeId}>
           ${theme.emotes.map((e) => html`<button key=${e.id} type="button" class="ewheel__item" data-emote=${e.id} aria-label=${t(e.label)}
               disabled=${cooling || disabled} onClick=${() => send(e.id)}>
             <${EmoteArt} id=${e.id} />
           </button>`)}
         </div>
       </div>
-      <button type="button" class="ewheel__nav is-prev" aria-label=${t('上一组表情')} disabled=${page <= 0} onClick=${() => go(page - 1)}><${GIcon} name="chevronLeft" /></button>
-      <button type="button" class="ewheel__nav is-next" aria-label=${t('下一组表情')} disabled=${page >= EMOTE_THEMES.length - 1} onClick=${() => go(page + 1)}><${GIcon} name="chevronRight" /></button>
+      <button type="button" class="ewheel__nav is-prev" aria-label=${t('上一组表情')} disabled=${safePage <= 0} onClick=${() => go(safePage - 1)}><${GIcon} name="chevronLeft" /></button>
+      <button type="button" class="ewheel__nav is-next" aria-label=${t('下一组表情')} disabled=${safePage >= themes.length - 1} onClick=${() => go(safePage + 1)}><${GIcon} name="chevronRight" /></button>
       <div class="ewheel__dots" role="tablist" aria-label=${t('表情主题')}>
-        ${EMOTE_THEMES.map((th, i) => html`<button key=${th.themeId} type="button" role="tab" class=${cx('ewheel__dot', i === page && 'is-on')}
-          aria-selected=${i === page ? 'true' : 'false'} aria-label=${`${t(th.name)} ${i + 1}/${EMOTE_THEMES.length}`} onClick=${() => go(i)}></button>`)}
+        ${themes.map((th, i) => html`<button key=${th.themeId} type="button" role="tab" class=${cx('ewheel__dot', i === safePage && 'is-on')}
+          aria-selected=${i === safePage ? 'true' : 'false'} aria-label=${`${th.custom ? th.name : t(th.name)} ${i + 1}/${themes.length}`} onClick=${() => go(i)}></button>`)}
       </div>`}
     </div>` : null}
   </div>`;

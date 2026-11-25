@@ -3,9 +3,11 @@
 import { readThemeDeclaration } from '../../../shared/plugins/theme.js';
 import { readNotices } from '../../../shared/plugins/notices.js';
 import { isSkinKey, readAssetOverlay } from '../../../shared/plugins/visual.js';
+import { CUSTOM_EMOTE_SLOTS_PER_PACK, isEmoteKey } from '../../../shared/constants.js';
 import { operatorFxProblems, pluginFxProblems } from '../../js/render/vfx/pluginFormat.js';
 
-export const PRESENTATION_TEMPLATES = Object.freeze(['theme', 'notices', 'fx', 'skins']);
+export const PRESENTATION_TEMPLATES = Object.freeze(['theme', 'notices', 'fx', 'skins', 'emotes']);
+export const EMOTE_PACKS_MAX = 16;
 export const fxUnit = id => `char_x_${id.replaceAll('-', '_')}_one`;
 export const skinTarget = target => (target || 'operator:char_102_texas').replace(/^operator:/, '');
 export const emptyBook = (id = 'flash') => ({ id, image: `fx/${id}.png`, frames: 1, cols: 1, fps: 12, anchor: [0.5, 0.5], scale: 1, blend: 'normal', loop: false });
@@ -15,6 +17,10 @@ export function presentationOptions(template, options = {}) {
   if (template === 'theme') return { vars: {}, ...options };
   if (template === 'notices') return { notices: [{ id: 'notice-1', title: 'Announcement', body: 'Replace this text with your announcement.' }], ...options };
   if (template === 'skins') return { outfits: [{ key: 'outfit-1', name: 'Outfit 1', group: '' }], ...options };
+  if (template === 'emotes') return {
+    packs: [{ key: 'pack-1', name: '自定义表情包', slots: [{ key: 'slot-1', label: '表情 1', image: 'emotes/pack-1/slot-1.png' }] }],
+    ...options,
+  };
   if (template === 'fx') return { source: 'flipbook', kitRef: 'char_102_texas', unit: '', skills: {},
     flipbooks: [emptyBook()], bindings: [{ slot: '0', phase: 'attack', effect: 'flash' }], ...options };
   return options;
@@ -22,6 +28,20 @@ export function presentationOptions(template, options = {}) {
 
 export function skinsOverlay(target, outfits) {
   return { chars: { [skinTarget(target)]: { skins: Object.fromEntries(outfits.map(({ key, ...skin }) => [key, skin])) } } };
+}
+export function emotesOverlay(packs) {
+  return {
+    emotes: Object.fromEntries((Array.isArray(packs) ? packs : []).map((pack) => [
+      pack.key,
+      {
+        name: pack.name,
+        slots: Object.fromEntries((Array.isArray(pack.slots) ? pack.slots : []).map((slot) => [
+          slot.key,
+          { label: slot.label ?? '', ...(slot.image ? { image: slot.image } : {}) },
+        ])),
+      },
+    ])),
+  };
 }
 export function fxOverlay(id, o) {
   const bind = Object.create(null);
@@ -48,6 +68,34 @@ export function validatePresentation(draft) {
       }
       if (!problems.length) {
         const read = readAssetOverlay(skinsOverlay(draft.target, o.outfits));
+        problems.push(...read.issues.filter(i => i.level === 'problem'));
+      }
+    }
+  }
+  if (draft.template === 'emotes') {
+    if (!Array.isArray(o.packs) || !o.packs.length || o.packs.length > EMOTE_PACKS_MAX) {
+      add('PLUGIN_ASSETS_SHAPE', 'packs', `1–${EMOTE_PACKS_MAX} emote packs required`);
+    } else {
+      const seenPacks = new Set();
+      for (const [pi, pack] of o.packs.entries()) {
+        if (!pack || !isEmoteKey(pack.key) || seenPacks.has(pack.key)) {
+          add('PLUGIN_ASSETS_SHAPE', `packs.${pi}.key`, 'Unique pack key: 1–32 lowercase letters, digits, _ -');
+        }
+        seenPacks.add(pack?.key);
+        if (!Array.isArray(pack?.slots) || pack.slots.length > CUSTOM_EMOTE_SLOTS_PER_PACK) {
+          add('PLUGIN_ASSETS_SHAPE', `packs.${pi}.slots`, `At most ${CUSTOM_EMOTE_SLOTS_PER_PACK} slots per pack`);
+        } else {
+          const seenSlots = new Set();
+          for (const [si, slot] of pack.slots.entries()) {
+            if (!slot || !isEmoteKey(slot.key) || seenSlots.has(slot.key)) {
+              add('PLUGIN_ASSETS_SHAPE', `packs.${pi}.slots.${si}.key`, 'Unique slot key: 1–32 lowercase letters, digits, _ -');
+            }
+            seenSlots.add(slot?.key);
+          }
+        }
+      }
+      if (!problems.length) {
+        const read = readAssetOverlay(emotesOverlay(o.packs));
         problems.push(...read.issues.filter(i => i.level === 'problem'));
       }
     }

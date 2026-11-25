@@ -347,3 +347,25 @@ export const emoteArtGroup = (id) => { const e = emoteInfo(id); return e ? `emot
 export const emoteArtPath = (id) => { const e = emoteInfo(id); return e ? `/assets/local/emoticon/${e.dir}/${e.picId}.png` : null; };
 export const EMOTE_COOLDOWN_MS = 1000; // activity_table autoChessData.constData.chatCD (s)
 export const EMOTE_BUBBLE_MS = 3000;   // constData.chatTime (s): how long a bubble stays up
+
+/** Prefix and key shape of a custom emote added by a cosmetic plugin (`assets.emotes.<pack>.slots.<slot>`). [ASSUMED] */
+export const CUSTOM_EMOTE_PREFIX = 'custom:';
+export const CUSTOM_EMOTE_KEY_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+export const CUSTOM_EMOTE_SLOTS_PER_PACK = 6;
+export const CUSTOM_EMOTE_MAX = 128;
+/** Valid pack or slot key for a custom emote (lowercase letters, digits, `_` `-`, 1–32 chars). */
+export const isEmoteKey = (k) => typeof k === 'string' && CUSTOM_EMOTE_KEY_RE.test(k);
+/** Valid wire id of a custom emote (`custom:<packKey>:<slotKey>`). */
+export function isCustomEmoteId(id) {
+  if (typeof id !== 'string' || !id.startsWith(CUSTOM_EMOTE_PREFIX)) return false;
+  const parts = id.slice(CUSTOM_EMOTE_PREFIX.length).split(':');
+  return parts.length === 2 && isEmoteKey(parts[0]) && isEmoteKey(parts[1]);
+}
+/** Build a custom emote wire id from valid pack and slot keys, or null. */
+export const makeCustomEmoteId = (packKey, slotKey) => (isEmoteKey(packKey) && isEmoteKey(slotKey) ? `${CUSTOM_EMOTE_PREFIX}${packKey}:${slotKey}` : null);
+/** Parse a custom emote wire id into `{ packKey, slotKey }`, or null. */
+export function parseCustomEmoteId(id) {
+  if (!isCustomEmoteId(id)) return null;
+  const [packKey, slotKey] = id.slice(CUSTOM_EMOTE_PREFIX.length).split(':');
+  return { packKey, slotKey };
+}

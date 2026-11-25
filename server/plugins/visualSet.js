@@ -28,7 +28,7 @@ import { createHash } from 'node:crypto';
 import { ERR } from '../../shared/constants.js';
 import { resolvePluginOrder } from '../../shared/plugins/order.js';
 import { PLUGIN_CLASSES } from '../../shared/plugins/manifest.js';
-import { VISUAL_HASH_VERSION, VISUAL_LIMITS, mergePluginOps, visualHashOf, vsUrlPart } from '../../shared/plugins/visual.js';
+import { VISUAL_HASH_VERSION, VISUAL_LIMITS, mergePluginOps, visualHashOf, vsUrlPart, customEmoteIdsFromOps } from '../../shared/plugins/visual.js';
 
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 /** Sets kept by vs16, most recently used last. */
@@ -129,6 +129,7 @@ export function createVisualSets({ registry, log = noopLog, limits = VISUAL_LIMI
     ].slice(0, limits.warnings);
     const overlays = list.map((p) => p.visual.composition);
     const vs = visualHashOf({ assets: art.sha256, overlays });
+    const customEmotes = customEmoteIdsFromOps(merged.ops);
     remember(vsUrlPart(vs), { vs, assets: art.sha256, overlays, plugins: list.map(snapshot) });
     return {
       ok: true,
@@ -137,6 +138,7 @@ export function createVisualSets({ registry, log = noopLog, limits = VISUAL_LIMI
         plugins: list.map((p) => ({ id: p.id, version: p.manifest.version, class: p.class, hash: p.visual.hash, ...(r.auto.includes(p.id) ? { auto: true } : {}) })),
         warnings,
         bytes,
+        ...(customEmotes.length ? { customEmotes } : {}),
       },
     };
   }

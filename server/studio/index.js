@@ -585,6 +585,9 @@ export function createStudio({ publicDir, pluginsDir, dataDir, registry, lobby =
       const field = at.at(-1);
       return { at, kind: loc.kind, field, dir: `skins/${keyDir(at[1])}/${Buffer.from(at[3]).toString('hex')}${loc.kind === 'spine' ? `/${field}` : ''}`, base: field };
     }
+    if (at[0] === 'emotes' && at[2] === 'slots' && at[4] === 'image' && loc.kind === 'image') {
+      return { at, kind: 'image', field: 'image', dir: `emotes/${keyDir(at[1])}`, base: keyDir(at[3]) };
+    }
     const kind = typeof loc.kind === 'string' ? loc.kind : null;
     if (!kind) throw new StudioError('PLUGIN_STUDIO_REQUEST', 400, { detail: `${at.join('.')} is a whole record, not one place` });
     return { at, kind, field: at[at.length - 1], dir: `assets/${keyDir(loc.key)}`, base: keyDir(at[at.length - 1]) };
@@ -611,7 +614,7 @@ export function createStudio({ publicDir, pluginsDir, dataDir, registry, lobby =
   async function putSlot(id, body) {
     // The skins template's slots stage, check and commit the whole change (uploads add no new problem, §34.30); the
     // 0.3.0 slots (art, models, voice, audio, a bond's icon) write directly as before, their check shown afterwards.
-    if (body.at?.[0] === 'chars' && body.at?.[2] === 'skins') await editMediaDraft(files, id, staged => writeSlot(id, body, staged), { dataDir });
+    if ((body.at?.[0] === 'chars' && body.at?.[2] === 'skins') || (body.at?.[0] === 'emotes' && body.at?.[2] === 'slots')) await editMediaDraft(files, id, staged => writeSlot(id, body, staged), { dataDir });
     else writeSlot(id, body, files);
     return changed(id);
   }
@@ -928,7 +931,7 @@ export function createStudio({ publicDir, pluginsDir, dataDir, registry, lobby =
       if (body.target && !t) throw new StudioError('PLUGIN_STUDIO_TARGET', 404, { target: text(body.target, 80) });
       if (t && !tpl.kinds.includes(t.kind)) throw new StudioError('PLUGIN_STUDIO_TARGET', 400, { target: targetSpec(t) });
       const made = createPlugin(tpl, { id, name: body.name, target: t, authors: body.authors, license: body.license, credits: body.credits, options: body.options || {}, data: tpl.build && tpl.class !== 'cosmetic' ? readStudioData(dataDir) : null, publicDir, lang: body.lang === 'en' ? 'en' : 'zh' });
-      if (['bond', 'item', 'trait', 'offers', 'rules', 'theme', 'notices', 'fx', 'skins'].includes(tpl.id)) authoring.generate(id, { template: tpl.id, target: body.target, options: body.options || {} }, made.manifest);
+      if (['bond', 'item', 'trait', 'offers', 'rules', 'theme', 'notices', 'fx', 'skins', 'emotes'].includes(tpl.id)) authoring.generate(id, { template: tpl.id, target: body.target, options: body.options || {} }, made.manifest);
       files.root(id, { create: true });
       files.write(id, PLUGIN_MANIFEST, Buffer.from(manifestText(made.manifest)));
       for (const [rel, text] of Object.entries(made.files)) files.write(id, rel, Buffer.from(text), { generated: true });

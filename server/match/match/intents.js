@@ -69,7 +69,7 @@ export class MatchIntents {
   }
 
   emote(ps, id) {
-    if (!EMOTES.includes(id)) return fail(ERR.BAD_MSG, 'unknown emote');
+    if (!EMOTES.includes(id) && !this.customEmotes?.has(id)) return fail(ERR.BAD_MSG, 'unknown emote');
     const now = this.sched.now();
     if (now - ps.lastEmoteAt < EMOTE_COOLDOWN_MS) return fail(ERR.RATE);
     ps.lastEmoteAt = now;

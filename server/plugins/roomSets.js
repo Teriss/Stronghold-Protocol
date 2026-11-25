@@ -112,6 +112,7 @@ export function createRoomSets({ registry, visual, contents, policy }) {
         ...(cset?.scripts?.length && cset.execution !== 'sandbox' ? {trusted:{plugins:cset.scripts.map(({id,version,hash,permissions,authors}) => ({id,version,hash,permissions,authors}))}} : {}),
         warnings: [...(vset?.warnings || []), ...warnings],
         bytes: vset ? vset.bytes : 0,
+        ...(vset?.customEmotes?.length ? { customEmotes: vset.customEmotes } : {}),
         ...(cset ? { dataBytes: cset.dataBytes, modes: cset.modes, kitted: cset.kitted } : {}),
         ...(cset?.rules ? { rules: cset.rules } : {}),
       },

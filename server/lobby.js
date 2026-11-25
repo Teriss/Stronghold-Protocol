@@ -1308,17 +1308,19 @@ export class Lobby {
       return fail(ERR.INTERNAL);
     }
     if (!r || !r.ok) return fail(r && isErrCode(r.error) ? r.error : ERR.INTERNAL, r && typeof r.detail === 'string' ? r.detail.slice(0, 200) : undefined);
-    const { cs, vs, plugins: list, warnings, bytes, dataBytes, modes, kitted, trusted, execution, rules } = r.set;
+    const { cs, vs, plugins: list, warnings, bytes, dataBytes, modes, kitted, trusted, execution, rules, customEmotes } = r.set;
     const modded = isContentHash(cs) && cs !== base.cs;
     const frozen = (a) => Object.freeze((Array.isArray(a) ? a : []).map((p) => Object.freeze({ ...p })));
     // the operators its plugins add to a 自选 slot's list (welcome.diyKitted holds the server's own): the pages' pickers
     const extra = modded && Array.isArray(kitted) ? kitted.filter((id) => typeof id === 'string' && !VANILLA_KITTED.has(id)).slice(0, 200) : [];
+    const customEmoteList = Array.isArray(customEmotes) ? customEmotes.filter((id) => typeof id === 'string') : [];
     return {
       content: Object.freeze({
         cs: modded ? cs : base.cs,
         vanilla: !modded,
         ...(base.version ? { version: base.version } : {}),
         ...(vs ? { vs } : {}),
+        ...(customEmoteList.length ? { customEmotes: Object.freeze(customEmoteList) } : {}),
         plugins: frozen(list),
         ...(trusted ? {trusted} : {}),
         ...(execution ? {execution} : {}),
@@ -2130,6 +2132,7 @@ export class Lobby {
         // replay names the art), and with gameplay plugins a b.result must name the room's cs (header "Gameplay plugins")
         ...(room.content ? { cs: room.content.cs } : {}),
         ...(room.content?.vs ? { vs: room.content.vs } : {}),
+        ...(room.content?.customEmotes?.length ? { customEmotes: [...room.content.customEmotes] } : {}),
         ...(modded || versioned ? { requireCs: true } : {}),
         // another official version (header "Official versions"): its registry id; a default room's opts keep their keys
         ...(versioned ? { version: room.version } : {}),

@@ -207,7 +207,7 @@ function PluginView({ id, info, onListChanged, eventsAt, onGone }) {
         onFiles=${onFiles} onRef=${onRef} onClear=${onClear} onFix=${onFix} onRemove=${() => saveSections(sections.filter((_, k) => k !== n))} />`)}
       ${state.class === 'cosmetic' && !state.authoring && !(state.sections || []).length ? html`<p class="st-note">${t('这个插件还没有要替换的内容。')}</p>` : null}
       ${state.class === 'cosmetic' ? html`<${Button} icon="plus" onClick=${() => setAddOpen(true)} disabled=${busy} data-testid="add-section">${t('添加替换内容')}<//>` : null}
-      <${AddSection} open=${addOpen} templates=${info.templates.filter(x => x.class === 'cosmetic' && !['theme', 'notices', 'skins'].includes(x.id))} onClose=${() => setAddOpen(false)}
+      <${AddSection} open=${addOpen} templates=${info.templates.filter(x => x.class === 'cosmetic' && !['theme', 'notices', 'skins', 'emotes'].includes(x.id))} onClose=${() => setAddOpen(false)}
         onAdd=${(s) => { setAddOpen(false); if (!sections.some((x) => x.template === s.template && x.target === s.target)) saveSections([...sections, s]); }} />
     </div>` : null}
     ${tab === 'trial' ? html`<${TrialBench} state=${state} draft=${draft} />` : null}

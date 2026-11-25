@@ -316,6 +316,8 @@ export class Match {
     this.cs = isContentHash(opts.cs) ? opts.cs : null;
     /** the room's visual set (opts.vs, DESIGN §32.6): every BattleSpec names it */
     this.vs = isContentHash(opts.vs) ? opts.vs : null;
+    /** Custom emote wire ids enabled by the room's visual set (omitted on vanilla matches). */
+    this.customEmotes = Array.isArray(opts.customEmotes) && opts.customEmotes.length ? new Set(opts.customEmotes.filter((id) => typeof id === 'string')) : null;
     /** a room with gameplay plugins (opts.requireCs): a client result must name this match's cs (reports.js) */
     this.requireCs = opts.requireCs === true && !!this.cs;
     /** a non-default official version's id (opts.version, DESIGN §35.23), else null (the default, act2autochess) */

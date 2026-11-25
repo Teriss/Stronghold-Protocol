@@ -21,6 +21,7 @@ export const TEMPLATE_LABELS = Object.freeze({
   notices: { title: N_('插件公告'), line: N_('填写公告、日期与翻译，预览纯文本弹窗。') },
   fx: { title: N_('干员特效'), line: N_('借用官方特效或上传序列帧，在 2D / 3D 试播。') },
   skins: { title: N_('干员时装'), line: N_('添加时装名称、系列、图片及正背面模型。') },
+  emotes: { title: N_('自定义表情包'), line: N_('新增局内自定义表情页（每页最多 6 张），支持多人房间同步显示。') },
   numbers: { title: N_('改数值'), line: N_('按官方名字选目标，修改属性与黑板数值。') },
   operator: { title: N_('新干员'), line: N_('填写属性，选择技能来源，自动生成普通与精锐卡。') },
   dsl: { title: N_('DSL 技能 / 天赋'), line: N_('用下拉选项组合触发器、条件与动作。') },

@@ -57,6 +57,17 @@ export function readPresentationOptions(id, author, documents, manifest, data) {
     const charId = (author.target || 'operator:char_102_texas').replace(/^operator:/, '');
     o.outfits = Object.entries(manifest.assets?.chars?.[charId]?.skins || {}).map(([key, rec]) => ({ key, ...rec }));
   }
+  if (author.template === 'emotes') {
+    o.packs = Object.entries(manifest.assets?.emotes || {}).map(([key, pack]) => ({
+      key,
+      name: pack?.name || '',
+      slots: Object.entries(pack?.slots || {}).map(([slotKey, slot]) => ({
+        key: slotKey,
+        label: slot?.label ?? '',
+        ...(slot?.image ? { image: slot.image } : {}),
+      })),
+    }));
+  }
   if (author.template === 'fx') {
     const doc = JSON.parse(documents['data/operator.json']?.toString() || '{}');
     const record = Array.isArray(doc) ? doc.find(r => r.charId === `char_x_${id.replaceAll('-', '_')}_one`) : doc;
