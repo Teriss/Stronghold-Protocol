@@ -709,6 +709,7 @@ export const S2C = [
   'p2p.config', 'p2p.signal', 'p2p.frame',
   'room.state', 'room.closed', 'room.list',
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.chat', 'm.chat.history', 'm.result',
+  'server.emotes',
   // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)

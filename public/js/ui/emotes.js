@@ -19,7 +19,7 @@
 // Official UI sprites come from the local ui/battle extraction when present; CSS draws look-alikes otherwise.
 // Styles: public/css/emotes.css (injected on first use when the page does not link it).
 
-import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
+import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import {
   EMOTE_THEMES, EMOTE_COOLDOWN_MS, EMOTE_BUBBLE_MS, CUSTOM_EMOTE_SLOTS_PER_PACK,
   emoteInfo, emoteArtGroup, isEmoteKey, makeCustomEmoteId, parseCustomEmoteId,
@@ -38,6 +38,108 @@ const SWIPE_PX = 40;      // horizontal drag distance that turns the page
 const DRAG_SLOP_PX = 8;   // below this a press is a tap, not a drag
 export const WHEEL_STEP_PX = 60;  // wheel / trackpad scroll that turns the page
 export const WHEEL_GAP_MS = 180;  // a pause this long ends a wheel gesture (a trackpad's momentum tail included)
+export const EMOTE_BUBBLE_MAX_MS = 15000;
+const EMOTE_BUBBLE_FADE_MS = 300; // matches emo-bubble-out in public/css/emotes.css
+
+/**
+ * Parse total one-loop animation duration (ms) from animated WebP (RIFF ANMF chunks) or APNG (fcTL chunks).
+ * Returns null for static or unrecognized images.
+ * @param {ArrayBuffer | Uint8Array} input
+ * @returns {number | null}
+ */
+export function parseAnimatedImageDurationMs(input) {
+  const b = input instanceof Uint8Array ? input : input instanceof ArrayBuffer ? new Uint8Array(input) : null;
+  if (!b || b.length < 16) return null;
+  // Animated WebP: RIFF <size> WEBP ... ANMF chunks (bytes 12..14 = 24-bit LE duration in ms)
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46
+      && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) {
+    let off = 12;
+    let frames = 0;
+    let total = 0;
+    while (off + 8 <= b.length) {
+      const size = (b[off + 4] | (b[off + 5] << 8) | (b[off + 6] << 16) | (b[off + 7] << 24)) >>> 0;
+      const dataStart = off + 8;
+      if (dataStart + size > b.length) break;
+      if (b[off] === 0x41 && b[off + 1] === 0x4e && b[off + 2] === 0x4d && b[off + 3] === 0x46 && size >= 16) {
+        frames++;
+        const d = b[dataStart + 12] | (b[dataStart + 13] << 8) | (b[dataStart + 14] << 16);
+        total += d > 0 ? d : 100;
+      }
+      off = dataStart + size + (size & 1);
+    }
+    return frames > 1 && total > 0 ? total : null;
+  }
+  // APNG: PNG signature + fcTL chunks (bytes 20..21 = delay_num BE, 22..23 = delay_den BE; 0 means 100)
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47
+      && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) {
+    let off = 8;
+    let frames = 0;
+    let total = 0;
+    while (off + 12 <= b.length) {
+      const len = ((b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]) >>> 0;
+      const dataStart = off + 8;
+      if (dataStart + len + 4 > b.length) break;
+      if (b[off + 4] === 0x66 && b[off + 5] === 0x63 && b[off + 6] === 0x54 && b[off + 7] === 0x4c && len >= 24) {
+        frames++;
+        const num = (b[dataStart + 20] << 8) | b[dataStart + 21];
+        const den = ((b[dataStart + 22] << 8) | b[dataStart + 23]) || 100;
+        total += (num / den) * 1000;
+      }
+      off = dataStart + len + 4;
+    }
+    return frames > 1 && total > 0 ? Math.round(total) : null;
+  }
+  return null;
+}
+
+/** @type {Map<string, number | null>} url → animated loop duration in ms (null = static / unknown) */
+const durationCache = new Map();
+/** @type {Map<string, Blob>} url → cached animated image bytes for fresh per-bubble playback from frame 1 */
+const animatedBlobCache = new Map();
+/** @type {Set<string>} */
+const durationInFlight = new Set();
+const durationListeners = new Set();
+
+export function onEmoteDuration(fn) {
+  if (typeof fn !== 'function') return () => {};
+  durationListeners.add(fn);
+  return () => durationListeners.delete(fn);
+}
+
+/** Probe and cache the animation duration (ms) of an emote image URL (hits browser cache when already loaded). */
+export function probeEmoteDuration(url) {
+  if (typeof url !== 'string' || !url || durationCache.has(url) || durationInFlight.has(url)) return;
+  if (typeof globalThis.fetch !== 'function') return;
+  durationInFlight.add(url);
+  globalThis.fetch(url).then(async (r) => {
+    if (!r.ok) return null;
+    const type = r.headers?.get?.('content-type') || '';
+    const buf = await r.arrayBuffer();
+    return { buf, type };
+  }).then((res) => {
+    const ms = res ? parseAnimatedImageDurationMs(res.buf) : null;
+    durationCache.set(url, ms);
+    if (ms != null && typeof Blob === 'function') {
+      animatedBlobCache.set(url, new Blob([res.buf], { type: res.type || 'image/webp' }));
+    }
+    if (ms != null) for (const fn of [...durationListeners]) { try { fn(url, ms); } catch { /* ignore */ } }
+  }).catch(() => {
+    durationCache.set(url, null);
+  }).finally(() => {
+    durationInFlight.delete(url);
+  });
+}
+
+/** Effective bubble lifetime (ms) for an emote: static/short emotes keep baseTtl; longer animations play one full loop + fade. */
+export function emoteBubbleMs(id, baseTtl = EMOTE_BUBBLE_MS, assets = data.get('assets')) {
+  const base = Math.max(300, Number(baseTtl) || EMOTE_BUBBLE_MS);
+  const custom = !emoteInfo(id) ? resolveEmoteInfo(id, assets) : null;
+  if (!custom?.art) return base;
+  if (!durationCache.has(custom.art)) probeEmoteDuration(custom.art);
+  const animMs = durationCache.get(custom.art);
+  if (!(animMs > 0)) return base;
+  return Math.min(EMOTE_BUBBLE_MAX_MS, Math.max(base, Math.round(animMs) + EMOTE_BUBBLE_FADE_MS));
+}
 
 // Time of the last send, shared by every wheel on the page: the 1 s cooldown survives a remount of the wheel (the
 // server enforces chatCD too and silently drops an emote sent early).
@@ -226,12 +328,24 @@ function EmoteGlyph({ class: cls }) {
  * neutral glyph when unavailable.
  * @param {{ id: string, class?: string }} props
  */
-export function EmoteArt({ id, class: cls }) {
+export function EmoteArt({ id, class: cls, restart = false }) {
   useData('local', 'assets');
   const [bad, setBad] = useState(() => new Set()); // URLs that failed to load
   const src = nextArtUrl(emoteArtUrls(id), bad);
-  if (src) {
-    return html`<img key=${src} class=${cx('eart', cls)} src=${src} alt="" draggable=${false} decoding="async"
+  useEffect(() => {
+    if (src && !emoteInfo(id)) probeEmoteDuration(src);
+  }, [id, src]);
+  // Give each bubble instance its own blob URL for cached animated emotes so browsers always decode from frame 1
+  // instead of sharing the emote wheel's live animation timeline.
+  const blobUrl = useMemo(() => {
+    if (!restart || !src || typeof URL?.createObjectURL !== 'function') return null;
+    const blob = animatedBlobCache.get(src);
+    return blob ? URL.createObjectURL(blob) : null;
+  }, [restart, src]);
+  useEffect(() => () => { if (blobUrl) URL.revokeObjectURL(blobUrl); }, [blobUrl]);
+  const imgSrc = blobUrl || src;
+  if (imgSrc) {
+    return html`<img key=${imgSrc} class=${cx('eart', cls)} src=${imgSrc} alt="" draggable=${false} decoding="async"
       onError=${() => setBad((s) => new Set(s).add(src))} />`;
   }
   if (resolveEmoteInfo(id) && artManifestsPending()) return html`<span class=${cx('eart', 'eart--pending', cls)} aria-hidden="true"></span>`;
@@ -245,17 +359,19 @@ export function EmoteArt({ id, class: cls }) {
  *   end); at = when the emote arrived (Date.now() clock): a bubble mounted after that resumes its pop / fade timeline
  *   instead of restarting it.
  */
-export function EmoteBubble({ id, class: cls, ttl = EMOTE_BUBBLE_MS, at }) {
+export function EmoteBubble({ id, class: cls, ttl, at }) {
   useData('local', 'assets');
   useEffect(() => { ensureEmoteCss(); }, []);
-  const life = Math.max(300, Number(ttl) || EMOTE_BUBBLE_MS);
+  const [, bump] = useState(0);
+  useEffect(() => onEmoteDuration(() => bump((n) => n + 1)), []);
+  const life = Math.max(300, Number(ttl) || emoteBubbleMs(id, EMOTE_BUBBLE_MS));
   const [age] = useState(() => bubbleAge(at, Date.now(), life)); // fixed at mount: the CSS animation runs from there
   const bg = emoteUiSprite('emoji_bubble_bkg');
   const e = resolveEmoteInfo(id);
   const style = [`--ebubble-ttl:${life}ms`, age && `--ebubble-age:${Math.round(age)}ms`, bg && `--ebubble-bg:url("${bg}")`].filter(Boolean).join(';');
   return html`<div class=${cx('ebubble', bg && 'has-sprite', cls)} style=${style} role="img"
     aria-label=${e ? t(e.label) : t('表情')} data-emote=${e ? e.id : ''}>
-    <span class="ebubble__icon"><${EmoteArt} id=${id} /></span>
+    <span class="ebubble__icon"><${EmoteArt} id=${id} restart=${true} /></span>
   </div>`;
 }
 
@@ -405,11 +521,13 @@ export function EmoteWheel({ onSend, open, onToggle, disabled = false, cooldownM
           </button>`)}
         </div>
       </div>
-      <button type="button" class="ewheel__nav is-prev" aria-label=${t('上一组表情')} disabled=${safePage <= 0} onClick=${() => go(safePage - 1)}><${GIcon} name="chevronLeft" /></button>
-      <button type="button" class="ewheel__nav is-next" aria-label=${t('下一组表情')} disabled=${safePage >= themes.length - 1} onClick=${() => go(safePage + 1)}><${GIcon} name="chevronRight" /></button>
-      <div class="ewheel__dots" role="tablist" aria-label=${t('表情主题')}>
-        ${themes.map((th, i) => html`<button key=${th.themeId} type="button" role="tab" class=${cx('ewheel__dot', i === safePage && 'is-on')}
-          aria-selected=${i === safePage ? 'true' : 'false'} aria-label=${`${th.custom ? th.name : t(th.name)} ${i + 1}/${themes.length}`} onClick=${() => go(i)}></button>`)}
+      <div class="ewheel__pager">
+        <button type="button" class="ewheel__nav is-prev" aria-label=${t('上一组表情')} disabled=${safePage <= 0} onClick=${() => go(safePage - 1)}><${GIcon} name="chevronLeft" /></button>
+        <div class=${cx('ewheel__dots', themes.length > 10 && 'is-many')} role="tablist" aria-label=${t('表情主题')}>
+          ${themes.map((th, i) => html`<button key=${th.themeId} type="button" role="tab" class=${cx('ewheel__dot', i === safePage && 'is-on')}
+            aria-selected=${i === safePage ? 'true' : 'false'} aria-label=${`${th.custom ? th.name : t(th.name)} ${i + 1}/${themes.length}`} onClick=${() => go(i)}></button>`)}
+        </div>
+        <button type="button" class="ewheel__nav is-next" aria-label=${t('下一组表情')} disabled=${safePage >= themes.length - 1} onClick=${() => go(safePage + 1)}><${GIcon} name="chevronRight" /></button>
       </div>`}
     </div>` : null}
   </div>`;

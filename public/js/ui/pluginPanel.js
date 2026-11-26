@@ -124,7 +124,7 @@ export function PluginPanel({ open, room, myId, onClose }) {
   const isHost = !!(room && room.hostId != null && room.hostId === myId);
   const recommended = visibleRecommend(room, isHost, recIds);
   const uiList = installed ? uiPluginEntries(cat.plugins) : [];
-  const offered = installed ? roomPlugins(cat.plugins) : [];
+  const offered = installed ? roomPlugins(cat.plugins).filter((p) => !p.emotesOnly) : [];
   const offeredIds = cat.status === 'ready' ? new Set(offered.map((p) => p.id)) : null;
   // a plugin the room has that the catalogue no longer offers (removed, skipped, another scope now) still shows, by its
   // id: its switch only turns it off

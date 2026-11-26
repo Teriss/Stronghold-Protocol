@@ -973,6 +973,11 @@ export function pluginIndexEntry(p) {
   const presentationOnly = (m.themeVars || m.notices) && p.visual?.bytes === 0 && p.visual?.ops?.length === 0;
   if (p.visual && !presentationOnly && typeof p.visual.vs === 'string') e.vs = p.visual.vs;
   if (p.visual && !presentationOnly && Number.isFinite(p.visual.bytes)) e.artBytes = p.visual.bytes;
+  const visualOps = Array.isArray(p.visual?.ops) ? p.visual.ops : [];
+  const hasEmoteImage = visualOps.some((op) => Array.isArray(op?.at) && op.at[0] === 'emotes' && op.at[2] === 'slots' && op.at[4] === 'image' && op.file);
+  if (p.class === 'cosmetic' && hasEmoteImage && visualOps.every((op) => Array.isArray(op?.at) && op.at[0] === 'emotes') && !m.themeVars && !(Array.isArray(m.notices) && m.notices.length)) {
+    e.emotesOnly = true;
+  }
   if (p.script) { e.sandboxable = p.script.sandboxable; e.execution = p.script.execution; e.hash = p.script.lockHash; }
   if (p.disabled) e.disabled = p.disabled;
   if (p.ui) {

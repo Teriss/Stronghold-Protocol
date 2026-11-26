@@ -182,6 +182,9 @@ function onWelcome(msg) {
     // how many unofficial plugins it has (P1a — absent: none; content.js fetches the catalogue only when there are some)
     installedPlugins: pluginCount(msg.content),
     installedNotices: msg.content?.notices === true,
+    serverEmotes: msg.serverEmotes && typeof msg.serverEmotes === 'object'
+      ? { vs: typeof msg.serverEmotes.vs === 'string' ? msg.serverEmotes.vs : null, ids: Array.isArray(msg.serverEmotes.ids) ? msg.serverEmotes.ids : [] }
+      : { vs: null, ids: [] },
     testMode: msg.testMode === true,
     // the official versions the server enables (protocol §2; absent: the switch is off — versions.js)
     versions: sanitizeVersions(msg.versions),
@@ -329,6 +332,9 @@ function wireNet() {
   net.on('m.chat.history', (msg) => { if (Array.isArray(msg.messages)) receiveChat(msg, msg.messages, false); });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
+  });
+  net.on('server.emotes', (msg) => {
+    store.set({ serverEmotes: { vs: typeof msg.vs === 'string' ? msg.vs : null, ids: Array.isArray(msg.ids) ? msg.ids : [] } });
   });
 
   // Entering (title → lobby) while already online also needs the deep-link join.

@@ -61,6 +61,8 @@ export function wireOptions(opts) {
   }
   // Rule switches ride with the content set. A room that declares none keeps today's worker payload.
   if (opts.rules && typeof opts.rules === 'object' && !Array.isArray(opts.rules)) out.rules = opts.rules;
+  // Room custom emotes from cosmetic plugins must reach hosted (versioned / modded) matches.
+  if (Array.isArray(opts.customEmotes) && opts.customEmotes.length) out.customEmotes = opts.customEmotes;
   return out;
 }
 
@@ -151,6 +153,7 @@ export class MatchProxy {
   }
   addSpectator(playerId) { this._notify('addSpectator', [playerId]); }
   removeSpectator(playerId) { this._notify('removeSpectator', [playerId]); }
+  setCustomEmotes(ids) { this._notify('setCustomEmotes', [ids]); }
   /** The match's diagnostics in the worker (tests). @returns {Promise<any>} */
   diag() { return this.disposed ? Promise.resolve(null) : this._request('diag', [], true); }
 

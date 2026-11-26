@@ -103,17 +103,20 @@ export function fieldLabel(field, pub, myId) {
 }
 
 /**
- * Active emote bubbles: playerId → { id, seq, at } for emotes younger than ttl.
+ * Active emote bubbles: playerId → { id, seq, at, ttl? } for emotes younger than their ttl.
  * @param {Array<{seq:number, playerId:string, id:string, at:number}>} emotes
  * @param {number} now
  * @param {number} [ttl]
+ * @param {((id: string) => number) | null} [ttlFor]
  */
-export function activeBubbles(emotes, now, ttl = 3000) {
+export function activeBubbles(emotes, now, ttl = 3000, ttlFor = null) {
   const out = new Map();
   for (const e of Array.isArray(emotes) ? emotes : []) {
-    if (!isObj(e) || !(now - e.at < ttl) || e.at > now + 1000) continue;
+    if (!isObj(e)) continue;
+    const life = typeof ttlFor === 'function' ? (Number(ttlFor(e.id)) || ttl) : ttl;
+    if (!(now - e.at < life) || e.at > now + 1000) continue;
     const cur = out.get(e.playerId);
-    if (!cur || cur.seq < e.seq) out.set(e.playerId, { id: e.id, seq: e.seq, at: e.at });
+    if (!cur || cur.seq < e.seq) out.set(e.playerId, ttlFor ? { id: e.id, seq: e.seq, at: e.at, ttl: life } : { id: e.id, seq: e.seq, at: e.at });
   }
   return out;
 }

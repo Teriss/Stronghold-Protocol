@@ -66,6 +66,8 @@ function plainUrl(url) {
 export function createCosmeticLayers() {
   /** @typedef {{ doc: any, prep: import('../../shared/plugins/visual.js').PreparedSet }} Layer */
   /** @type {Layer | null} */
+  let server = null;
+  /** @type {Layer | null} */
   let room = null;
   /** @type {(Layer & { id: string })[]} */
   let personal = [];
@@ -79,6 +81,7 @@ export function createCosmeticLayers() {
   let dropFn = null;
   let toldLay = -1;
   // what was set while shared/plugins/visual.js was still loading (the last one wins)
+  let pendingServer;
   let pendingRoom;
   let pendingPersonal;
   const prepared = new WeakMap(); // document → its PreparedSet (a document never changes)
@@ -102,6 +105,15 @@ export function createCosmeticLayers() {
   };
   const later = (what) => loadVisual().then(what, (err) => console.warn('[cosmetics] shared/plugins/visual.js did not load', err));
   return {
+    /** The server-wide visual set (e.g. owner-enabled emote packs), or null. */
+    setServer(doc) {
+      const next = isObj(doc) ? doc : null;
+      if (next && !visual) { pendingServer = next; later(() => { if (pendingServer === next) { pendingServer = undefined; this.setServer(next); } }); return; }
+      pendingServer = undefined;
+      if (next === (server ? server.doc : null)) return;
+      server = next ? { doc: next, prep: prepare(next) } : null;
+      changed();
+    },
     /** The room's visual set: its checked document (/vs/<vs16>/overlay.json), or null (no room, a room without plugins). */
     setRoom(doc) {
       const next = isObj(doc) ? doc : null;
@@ -120,12 +132,14 @@ export function createCosmeticLayers() {
       personal = next.map((p) => ({ id: p.id, doc: p.doc, prep: prepare(p.doc) }));
       changed();
     },
+    /** The server-wide document, or null. */
+    get server() { return server ? server.doc : null; },
     /** The room's document, or null. */
     get room() { return room ? room.doc : null; },
     /** The personal plugins applied: `[{ id, doc }]`. */
     get personal() { return personal; },
-    /** Is any layer on (a room set or a personal plugin)? */
-    get active() { return !!room || personal.length > 0; },
+    /** Is any layer on (a server set, a room set or a personal plugin)? */
+    get active() { return !!server || !!room || personal.length > 0; },
     /**
      * A file of a layer failed to load (an image, a Spine model — any of its files —, a sound): its writes are left out
      * from now on and the listeners are told (the entry draws the art beneath it). Whether it was one of the layers'.
@@ -135,7 +149,7 @@ export function createCosmeticLayers() {
     fail(url) {
       const u = plainUrl(url);
       if (!u || failed.has(u)) return false;
-      if (!(room && room.prep.urls.has(u)) && !personal.some((p) => p.prep.urls.has(u))) return false;
+      if (!(server && server.prep.urls.has(u)) && !(room && room.prep.urls.has(u)) && !personal.some((p) => p.prep.urls.has(u))) return false;
       failed.add(u);
       console.warn(`[cosmetics] ${u} did not load: its entry falls back to the art beneath it`);
       changed();
@@ -146,12 +160,12 @@ export function createCosmeticLayers() {
     /** `fn(reasons, count)` when writes had to be left out (see above); one listener. */
     onDrop(fn) { dropFn = typeof fn === 'function' ? fn : null; },
     apply(base) {
-      if (!room && !personal.length) return base;
+      if (!server && !room && !personal.length) return base;
       const key = isObj(base) ? base : EMPTY_MANIFEST;
       const hit = memo.get(key);
       if (hit && hit.gen === gen) return hit.value;
       // (a layer is only ever set with shared/plugins/visual.js there)
-      const { manifest, dropped } = visual.layVisualOps(key, [...(room ? [room.prep] : []), ...personal.map((p) => p.prep)], { failed });
+      const { manifest, dropped } = visual.layVisualOps(key, [...(server ? [server.prep] : []), ...(room ? [room.prep] : []), ...personal.map((p) => p.prep)], { failed });
       // a reference the page's manifest lacks (told once per change, for a manifest that is loaded)
       if (dropped.length && key !== EMPTY_MANIFEST && toldLay !== gen) {
         toldLay = gen;

@@ -316,7 +316,7 @@ export class Match {
     this.cs = isContentHash(opts.cs) ? opts.cs : null;
     /** the room's visual set (opts.vs, DESIGN §32.6): every BattleSpec names it */
     this.vs = isContentHash(opts.vs) ? opts.vs : null;
-    /** Custom emote wire ids enabled by the room's visual set (omitted on vanilla matches). */
+    /** Custom emote wire ids enabled by the room's visual set or server-wide emote plugins. */
     this.customEmotes = Array.isArray(opts.customEmotes) && opts.customEmotes.length ? new Set(opts.customEmotes.filter((id) => typeof id === 'string')) : null;
     /** a room with gameplay plugins (opts.requireCs): a client result must name this match's cs (reports.js) */
     this.requireCs = opts.requireCs === true && !!this.cs;
@@ -569,6 +569,11 @@ export class Match {
     // above). The input journal records the steps that callback took; replay stops there.
     this.externalAI = createExternalAI(this, opts);
     if (this.test && opts.journal !== false) installTestTrace(this, opts);
+  }
+
+  /** Update allowed custom emote wire ids on a live match when the server owner toggles server-wide emote packs. */
+  setCustomEmotes(ids) {
+    this.customEmotes = Array.isArray(ids) && ids.length ? new Set(ids.filter((id) => typeof id === 'string')) : null;
   }
 }
 

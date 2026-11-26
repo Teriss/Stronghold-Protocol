@@ -15,7 +15,7 @@ export default {
     }
     return {
       manifest: {
-        scope: ['room', 'personal'],
+        scope: ['room'],
         permissions: ['assets.add'],
         assets: emotesOverlay(o.packs),
       },

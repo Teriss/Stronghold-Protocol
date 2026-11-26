@@ -68,6 +68,7 @@ export function createPreviewLayers() {
           if (v !== undefined) mirror.push({ at: [...p.slice(0, -1), `${p[p.length - 1]}${PLUGIN_SUFFIX}`], value: v });
         }
       }
+      if (withPlugin.emotes !== undefined) mirror.push({ at: ['emotes'], value: withPlugin.emotes });
       const value = applyOps(key, mirror);
       memo.set(key, { gen, value });
       return value;

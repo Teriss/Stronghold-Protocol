@@ -108,7 +108,7 @@ import { EnemyDrawer } from '../ui/enemyDrawer.js';
 import { BossRouteToggle } from '../ui/bossRouteToggle.js';
 import { MatchBondDialog, matchInfoModel, regulationCoreAbsent } from '../ui/matchInfo.js';
 import { Ticker } from '../ui/ticker.js';
-import { EmoteWheel } from '../ui/emotes.js';
+import { EmoteWheel, emoteBubbleMs, onEmoteDuration } from '../ui/emotes.js';
 import { MatchCommunication } from '../ui/matchCommunication.js';
 import { EndlessVote } from '../ui/endlessVote.js';
 import { BandCommand, CommandDraft } from '../ui/bandCommand.js';
@@ -1198,10 +1198,12 @@ function MatchScreen({ communication = null } = {}) {
 
   // emote + chat bubbles (and a sound for teammates' emotes)
   const chatMessages = useStore((s) => s.chat?.messages);
+  const [, bumpEmoteDur] = useState(0);
+  useEffect(() => onEmoteDuration(() => bumpEmoteDur((n) => n + 1)), []);
   const bubbleMs = (gd.config?.timers?.chatBubble ?? 3) * 1000;
   const chatBubbleMs = Math.max(4000, bubbleMs);
   const nowMs = Date.now();
-  const bubbles = activeBubbles(emotes, nowMs, bubbleMs);
+  const bubbles = activeBubbles(emotes, nowMs, bubbleMs, (id) => emoteBubbleMs(id, bubbleMs));
   if (Array.isArray(chatMessages)) {
     for (const m of chatMessages) {
       if (!m || !m.playerId || typeof m.text !== 'string' || !m.receivedAt) continue;

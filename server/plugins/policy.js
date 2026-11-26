@@ -35,7 +35,7 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 /** The defaults (no file). */
 export const DEFAULT_POLICY = Object.freeze({
-  rooms: 'host', default: Object.freeze([]), allow: Object.freeze(['*']),
+  rooms: 'host', default: Object.freeze([]), emotes: Object.freeze([]), allow: Object.freeze(['*']),
   classes: Object.freeze({ cosmetic: true, content: true }), maxSets: DEFAULT_MAX_SETS, allowIncompatible: false,
 });
 
@@ -54,6 +54,10 @@ export function readPolicy(json, { env = process.env } = {}) {
   if (o.default !== undefined) {
     if (Array.isArray(o.default) && o.default.length <= 32 && o.default.every(isPluginId)) p.default = [...new Set(o.default)];
     else problems.push('"default" must be a list of plugin ids');
+  }
+  if (o.emotes !== undefined) {
+    if (Array.isArray(o.emotes) && o.emotes.length <= 32 && o.emotes.every(isPluginId)) p.emotes = [...new Set(o.emotes)];
+    else problems.push('"emotes" must be a list of plugin ids');
   }
   if (o.allow !== undefined) {
     if (Array.isArray(o.allow) && o.allow.every((x) => x === '*' || isPluginId(x))) p.allow = [...o.allow];
@@ -75,7 +79,29 @@ export function readPolicy(json, { env = process.env } = {}) {
   if (o.allowIncompatible !== undefined) { if (typeof o.allowIncompatible === 'boolean') p.allowIncompatible = o.allowIncompatible; else problems.push('"allowIncompatible" must be true or false'); }
   const e = String(env?.SP_PLUGINS ?? '').trim().toLowerCase();
   if (e) { if (ROOMS.includes(e)) p.rooms = e; else problems.push(`SP_PLUGINS=${e} is not one of ${ROOMS.join(', ')}`); }
-  return { policy: Object.freeze({ ...p, default: Object.freeze(p.default), allow: Object.freeze(p.allow), classes: Object.freeze(p.classes) }), problems };
+  return { policy: Object.freeze({ ...p, default: Object.freeze(p.default), emotes: Object.freeze(p.emotes), allow: Object.freeze(p.allow), classes: Object.freeze(p.classes) }), problems };
+}
+
+/**
+ * Update the server-wide enabled emote plugin ids in `plugins/config.json`, preserving every other key.
+ * @param {string} pluginsDir
+ * @param {string[]} ids
+ */
+export function writePolicyEmotes(pluginsDir, ids) {
+  const file = path.join(pluginsDir, POLICY_FILE);
+  let doc = {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) doc = raw;
+  } catch { /* missing or unreadable: start fresh */ }
+  const next = [...new Set((Array.isArray(ids) ? ids : []).filter(isPluginId))].slice(0, 32);
+  if (next.length) doc.emotes = next;
+  else delete doc.emotes;
+  fs.mkdirSync(pluginsDir, { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`);
+  fs.renameSync(tmp, file);
+  return next;
 }
 
 /**

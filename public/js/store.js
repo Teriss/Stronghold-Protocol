@@ -87,6 +87,8 @@ export const initialState = Object.freeze({
   installedPlugins: 0,
   // A language-only installation may have announcements without an unofficial plugin count.
   installedNotices: false,
+  // Server-wide emote packs enabled by the server owner (welcome / server.emotes).
+  serverEmotes: { vs: null, ids: [] },
   session: { entered: false },
   room: null,
   // welcome.testMode (DESIGN §34.8). The server omits the key when the switch is off; the client cannot set it.

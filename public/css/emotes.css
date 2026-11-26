@@ -97,22 +97,28 @@
 .ewheel__item:focus-visible { outline: 2px solid var(--mint-500); outline-offset: 1px; }
 .ewheel__item:disabled { opacity: .45; cursor: default; }
 
-/* pager: ‹ dots › in the strip under the cells */
-.ewheel__dots { position: absolute; left: .15rem; width: 2.82rem; top: 1.99rem; height: .12rem; display: flex; align-items: center; justify-content: center; gap: .1rem; }
+/* pager: ‹ dots › in the strip under the cells (scales cleanly from 6 official pages to 6 + custom packs) */
+.ewheel__pager {
+  position: absolute; left: .15rem; width: 2.82rem; top: 1.94rem; height: .22rem; box-sizing: border-box; padding: 0 .06rem;
+  display: flex; align-items: center; justify-content: center; gap: .06rem;
+}
+.ewheel__dots {
+  flex: 0 1 auto; min-width: 0; max-width: calc(100% - .64rem); height: .12rem;
+  display: flex; align-items: center; justify-content: center; gap: .08rem;
+}
+.ewheel__dots.is-many { gap: .04rem; }
 .ewheel__dot {
-  position: relative; width: .11rem; height: .12rem; padding: 0; border: 0; border-radius: .015rem; background: rgba(255, 255, 255, .28);
+  position: relative; flex: 0 1 .11rem; width: .11rem; min-width: .04rem; height: .12rem; padding: 0; border: 0; border-radius: .015rem; background: rgba(255, 255, 255, .28);
   transition: background-color var(--t-fast), transform var(--t-fast);
 }
 .ewheel__dot:hover { background: rgba(255, 255, 255, .55); }
 .ewheel__dot.is-on { background: #fff; transform: scale(1.12); }
-.ewheel__dot::before { content: ''; position: absolute; inset: -.05rem -.05rem; } /* bigger hit area */
+.ewheel__dot::before { content: ''; position: absolute; inset: -.05rem -.03rem; } /* bigger hit area */
 .ewheel__nav {
-  position: absolute; top: 1.94rem; width: .26rem; height: .22rem; display: grid; place-items: center; padding: 0; z-index: 1;
+  position: relative; flex: 0 0 .26rem; width: .26rem; height: .22rem; display: grid; place-items: center; padding: 0; z-index: 1;
   background: none; border: 0; color: rgba(255, 255, 255, .6); transition: color var(--t-fast), opacity var(--t-fast);
 }
 .ewheel__nav .icon { width: .18rem; height: .18rem; }
-.ewheel__nav.is-prev { left: .7rem; }
-.ewheel__nav.is-next { right: .7rem; }
 .ewheel__nav:hover:not(:disabled) { color: #fff; }
 .ewheel__nav:disabled { opacity: .18; cursor: default; }
 

@@ -363,7 +363,7 @@ export function TeamPanel({ pub, priv = null, gd = null, myId, watching, bubbles
             </div>`}
             ${bubble ? (bubble.kind === 'chat'
               ? html`<${ChatBubble} key=${`c:${bubble.seq}`} text=${bubble.text} at=${bubble.at} ttl=${bubble.ttl} class="team__bubble" />`
-              : html`<${EmoteBubble} key=${`e:${bubble.seq}`} id=${bubble.id} at=${bubble.at} class="team__bubble" />`) : null}
+              : html`<${EmoteBubble} key=${`e:${bubble.seq}`} id=${bubble.id} at=${bubble.at} ttl=${bubble.ttl} class="team__bubble" />`) : null}
           </div>`;
         })}
       </div>

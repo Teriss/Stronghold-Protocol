@@ -158,6 +158,7 @@ export function hasThemeVars(p) {
  * [ASSUMED] A cosmetic that is only announcements is not listed — its switch would change nothing on the page.
  */
 export function isPersonalCosmetic(p) {
+  if (p?.emotesOnly) return false;
   return isVisualHash(p?.vs) || hasThemeVars(p);
 }
 
@@ -305,6 +306,22 @@ export function installContent({ store = appStore, data = dataStore, layers = co
   const onImgError = (e) => { const el = e?.target; if (el && el.tagName === 'IMG') layers.fail?.(el.currentSrc || el.src); };
   doc?.addEventListener?.('error', onImgError, true);
 
+  // the server-wide emote visual set (owner-enabled emote packs: active for every player & room)
+  let serverVs = null;
+  let serverReq = 0;
+  const syncServerEmotes = (s) => {
+    const vs = isVisualHash(s?.serverEmotes?.vs) ? s.serverEmotes.vs : null;
+    if (vs === serverVs) return;
+    serverVs = vs;
+    const req = ++serverReq;
+    if (!vs) { layers.setServer?.(null); return; }
+    fetchVisualDoc(vs, { fetch: doFetch, retryDelays }).then((r) => {
+      if (req !== serverReq) return;
+      if ('error' in r) { layers.setServer?.(null); tell(r.error); return; }
+      layers.setServer?.(r.doc);
+    });
+  };
+
   // the room's visual set
   let roomVs = null;
   let roomReq = 0;
@@ -364,10 +381,12 @@ export function installContent({ store = appStore, data = dataStore, layers = co
   // the server's plugin count arrives with welcome (or changes on a reconnect): the personal plugins follow it
   let installed = installedCount(store.get());
   const offStore = store.subscribe((s) => {
+    syncServerEmotes(s);
     syncRoom(s);
     const n = installedCount(s);
     if (n !== installed) { installed = n; if (personal.get().ids.length) syncPersonal(); }
   });
+  syncServerEmotes(store.get());
   syncRoom(store.get());
   const offPersonal = personal.subscribe(() => { syncPersonal(); });
   // a catalogue fetched again may name a plugin's new `vs` (its files changed): the switched-on ones follow
@@ -375,10 +394,10 @@ export function installContent({ store = appStore, data = dataStore, layers = co
   const offCatalog = catalog.subscribe((c) => { if (c.at !== catalogAt) { catalogAt = c.at; if (personal.get().ids.length) syncPersonal(); } });
   if (personal.get().ids.length) syncPersonal();
   return () => {
-    ++personalReq; ++roomReq; // Drop in-flight answers before removing this install's properties and layers.
+    ++personalReq; ++roomReq; ++serverReq; // Drop in-flight answers before removing this install's properties and layers.
     offStore(); offPersonal(); offCatalog(); offLayers(); offFailed(); layers.onDrop(null);
     doc?.removeEventListener?.('error', onImgError, true);
-    data.setView('assets', null); layers.setRoom(null); layers.setPersonal([]);
+    data.setView('assets', null); layers.setServer?.(null); layers.setRoom(null); layers.setPersonal([]);
     themeApplied = applyThemeProperties(globalThis.document?.documentElement, [], themeApplied);
   };
 }

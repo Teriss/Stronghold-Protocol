@@ -2195,7 +2195,28 @@ export class Lobby {
     if (versions) info.versions = versions;
     // Omitted when the switch is off, so a welcome from a normal server stays identical.
     if (this.testEnabled === true) info.testMode = true;
+    const se = this.serverEmotes?.state?.();
+    if (se?.vs) info.serverEmotes = { vs: se.vs, ids: [...se.ids] };
     return info;
+  }
+
+  /** Broadcast updated server-wide emote plugins to all sessions and update running matches. */
+  onServerEmotesChange(st) {
+    const vs = st?.vs || null;
+    const ids = Array.isArray(st?.ids) ? [...st.ids] : [];
+    const serverCustom = Array.isArray(st?.customEmotes) ? st.customEmotes : [];
+    const msg = { t: 'server.emotes', vs, ids };
+    const encoded = encode(msg);
+    if (typeof this.registry?.all === 'function') {
+      for (const s of this.registry.all()) {
+        if (s?.connected) sendSession(s, msg, encoded);
+      }
+    }
+    for (const room of this.rooms.values()) {
+      if (!room.match || typeof room.match.setCustomEmotes !== 'function') continue;
+      const merged = [...new Set([...(room.content?.customEmotes || []), ...serverCustom])];
+      room.match.setCustomEmotes(merged);
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -2265,7 +2286,10 @@ export class Lobby {
         // replay names the art), and with gameplay plugins a b.result must name the room's cs (header "Gameplay plugins")
         ...(room.content ? { cs: room.content.cs } : {}),
         ...(room.content?.vs ? { vs: room.content.vs } : {}),
-        ...(room.content?.customEmotes?.length ? { customEmotes: [...room.content.customEmotes] } : {}),
+        ...(() => {
+          const allEmotes = [...new Set([...(room.content?.customEmotes || []), ...(this.serverEmotes?.state?.()?.customEmotes || [])])];
+          return allEmotes.length ? { customEmotes: allEmotes } : {};
+        })(),
         ...(modded || versioned ? { requireCs: true } : {}),
         // another official version (header "Official versions"): its registry id; a default room's opts keep their keys
         ...(versioned ? { version: room.version } : {}),

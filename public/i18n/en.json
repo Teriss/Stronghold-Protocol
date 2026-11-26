@@ -2677,5 +2677,8 @@
   "支持查看全队 · 同名干员合并 · 召唤物计入所属干员": "Full team view · Same-name operators combined · Summons credited to owner",
   "实际扣血 / 有效治疗，DPS / HPS 按对应玩家战斗秒数计算。队友数据在战斗结束后同步。": "Effective HP loss / actual healing; DPS / HPS by each player’s battle seconds. Teammates sync after battle.",
   "按玩家": "By Player",
-  "全干员": "All Operators"
+  "全干员": "All Operators",
+  "表情包插件": "Emote Plugins",
+  "仅服务器主人可见；开启后，服务器内所有房间与玩家均同步生效。": "Visible only to the server owner; when enabled, active for all rooms and players on this server.",
+  "表情包插件切换失败": "Failed to update emote plugin"
 }

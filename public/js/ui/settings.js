@@ -285,6 +285,58 @@ function DiagSection() {
 }
 
 /**
+ * 表情包插件: visible only to the server owner (verified by GET /api/server-emotes); toggling an emote pack
+ * persists it to plugins/config.json and activates it for every room and player on this server.
+ */
+function EmotePluginSection() {
+  const [state, setState] = useState({ owner: false, plugins: [] });
+  const [busyId, setBusyId] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/server-emotes', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d || d.owner !== true) return;
+        setState({ owner: true, plugins: Array.isArray(d.plugins) ? d.plugins : [] });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!state.owner || !state.plugins.length) return null;
+  const flip = async (id, enabled) => {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      const res = await fetch('/api/server-emotes', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, enabled }),
+      });
+      const dataRes = await res.json().catch(() => null);
+      if (!res.ok || !dataRes?.ok) { toast(t('表情包插件切换失败'), 'warn'); return; }
+      setState({ owner: true, plugins: Array.isArray(dataRes.plugins) ? dataRes.plugins : [] });
+      store.set({ serverEmotes: { vs: typeof dataRes.vs === 'string' ? dataRes.vs : null, ids: Array.isArray(dataRes.enabled) ? dataRes.enabled : [] } });
+    } catch {
+      toast(t('表情包插件切换失败'), 'warn');
+    } finally {
+      setBusyId(null);
+    }
+  };
+  return html`<section class="set-plugins" aria-labelledby="set-emotes-title" data-testid="server-emote-plugins">
+    <${SetHead} id="set-emotes-title" icon="image" title=${t('表情包插件')} micro="EMOTE PLUGINS" />
+    <p class="set-hint">${t('仅服务器主人可见；开启后，服务器内所有房间与玩家均同步生效。')}</p>
+    ${state.plugins.map((p) => {
+      const on = !!p.enabled;
+      return html`<div key=${p.id} class="set-row" data-emote-plugin=${p.id}>
+        <span class="set-row__label">${pluginName(p)}<${MicroLabel}>${pluginMicro(p)}<//></span>
+        <button type="button" class=${`set-toggle${on ? ' is-on' : ''}`} role="switch" aria-checked=${on ? 'true' : 'false'} aria-label=${pluginName(p)}
+          disabled=${busyId === p.id} onClick=${() => flip(p.id, !on)}><i></i><span>${on ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
+      </div>`;
+    })}
+  </section>`;
+}
+
+/**
  * 外观插件 (see the header): the server's cosmetic plugins of scope `personal`, each with its switch; nothing when there
  * is none. The catalogue is fetched again when the section opens (a plugin dropped in meanwhile shows) — on a server that
  * has plugins only (content.js installedCount: a server without any is never asked for it).
@@ -568,6 +620,7 @@ export function SettingsModal({ open, onClose }) {
       <${Toggle} label=${t('主题动画')} micro="THEME MOTION" value=${s.themeMotion} onChange=${(v) => updateSettings({ themeMotion: v })} />
       <p class="set-hint" data-testid="theme-motion-hint">${t('规程里乌萨斯齐心团、可露希尔主题界面的循环动画（倒计时与按钮的闪光等）。关闭后只显示静态画面，适合配置较低的设备；系统开启“减少动态效果”时也不播放。')}</p>
       <${HotkeySection} keys=${s.keys} touchUi=${touchUi} />
+      <${EmotePluginSection} />
       <${CosmeticSection} />
       <${UiPluginSection} />
       <${StorageSection} />
